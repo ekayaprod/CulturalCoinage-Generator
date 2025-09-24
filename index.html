@@ -56,11 +56,12 @@
     <div id="root" class="bg-gray-900 w-full min-h-screen flex flex-col"></div>
     <script>
         /**
-         * Cultural Coinage Generator - Optimized Vanilla JS Version
+         * Cultural Coinage Generator - Using Gemini 2.5 Pro
          */
 
         //--- CONFIGURATION & DATA ---
-        const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-preview-05-20:generateContent";
+        // UPDATE: Switched to the Gemini 2.5 Pro model.
+        const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-latest:generateContent";
         const themeOptions = ["Nature", "Cosmic", "Balance", "Strength", "Water", "Light", "Shadow", "Music"];
         const styleOptions = ["Lyrical & Melodic", "Archaic & Mythic", "Minimalist & Modern", "Heroic & Resonant"];
         const blacklist = ["tuna", "ilay", "baran", "nur", "solren", "kuzel", "anal"];
