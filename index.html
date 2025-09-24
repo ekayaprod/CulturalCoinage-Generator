@@ -43,8 +43,7 @@
   const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Slavic","Japanese","Greek","Sanskrit","Arabic"];
   const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music", "Fire", "Mountain", "Ocean", "Sky", "Forest", "Mythic"];
   const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant", "Elegant & Refined", "Grounded & Earthy", "Mystical & Ethereal"];
-  const SYSTEM_BLACKLIST = ["tuna","ilay","baran","nur","solren","kuzel","anal"];
-  const MORPHEME_DICTIONARY = { sol: "Latin, sun", ren: "Japanese, lotus", dra: "Greek, serpent", astro: "Greek, star", luna: "Latin, moon" };
+  const SYSTEM_BLACKLIST = ["tuna","anal"];
 
   // --- State ---
   const appState = {
@@ -140,16 +139,14 @@
         let rootsString = "";
         if (typeof it.roots === 'string') {
             rootsString = it.roots;
-        } else if (Array.isArray(it.roots)) {
-            rootsString = it.roots.map(root => {
+        } else if (it.roots && typeof it.roots === 'object') {
+            rootsString = Object.values(it.roots).map(root => {
                 if (typeof root === 'string') return root;
                 if (typeof root === 'object' && root !== null) {
                     return Object.entries(root).map(([key, value]) => `${key} (${value})`).join(', ');
                 }
                 return '';
             }).filter(Boolean).join(' + ');
-        } else if (typeof it.roots === 'object' && it.roots !== null) {
-            rootsString = Object.entries(it.roots).map(([key, value]) => `${key} (${value})`).join(' + ');
         }
         let roots = rootsString.trim();
 
@@ -161,23 +158,12 @@
         if (meaning && meaning.split(' ').length < 3) {
             meaning += ` — a name that feels ${cluster.toLowerCase().split('&')[0].trim()} and expansive.`;
         }
-
-        // Enrich roots if shallow
-        if (roots && !roots.includes('+')) {
-            for (const [key, value] of Object.entries(MORPHEME_DICTIONARY)) {
-                if (name.toLowerCase().includes(key) && !roots.toLowerCase().includes(key)) {
-                    roots += ` + ${value}`;
-                }
-            }
-        }
         
         // Fallback for cluster
         if (!cluster) {
             const vowels = (name.toLowerCase().match(/[aeiouy]/g) || []).length;
             const consonants = (name.toLowerCase().match(/[bcdfghjklmnpqrstvwxz]/g) || []).length;
-            if (Object.keys(MORPHEME_DICTIONARY).some(m => name.toLowerCase().includes(m))) {
-                cluster = "Mythic & Cosmic";
-            } else if (vowels > consonants) {
+            if (vowels > consonants) {
                 cluster = "Airy & Flowing";
             } else {
                 cluster = "Strong & Grounded";
@@ -528,41 +514,49 @@
       : `This is the first generation of this session.`;
 
     return `
-You are the Cultural Coinage Agent. (See philosophy baked into codebase for guiding intent.)
+You are the Cultural Coinage Agent, a dynamic linguistic researcher. (See philosophy in codebase.)
+
+LINGUISTIC RESEARCH PROTOCOL:
+Before generating, perform these steps:
+1. Identify the language family/families of the user's selections in the TASK.
+2. Research authentic morphological and phonological patterns for those language families.
+3. Consider the cultural context and historical relationships of the selected languages.
+4. Apply this researched knowledge consistently across all generated names.
 
 MISSION
-- Your primary mission is to INVENT COMPLETELY NEW, poetic, pronounceable ${gender || "unisex"} names.
-- You must achieve this by CREATIVELY FUSING morphemes (parts of words) from the specified languages.
-- DO NOT, under any circumstances, return common or existing names from your training data. The user wants novel inventions.
+- Invent COMPLETELY NEW, poetic, pronounceable ${gender || "unisex"} names.
+- Fuse morphemes from the specified languages ONLY, respecting their linguistic rules.
+- DO NOT return common or existing names. The user wants novel inventions.
 
 SESSION MEMORY
 ${sessionMemoryInstruction}
-Blacklist: ${fullBlacklist.join(", ")} (strictly exclude).
+Blacklist: ${fullBlacklist.join(", ")} (strictly exclude any name containing these substrings).
 
 OUTPUT FORMAT
-Return ONLY a raw JSON array of objects.
-Do not wrap in text, markdown, or explanations.
+Return ONLY a raw JSON array of objects. Do not wrap in text or markdown.
 Each object must include:
 {
   "name": "string",
-  "meaning": "poetic interpretation",
-  "roots": "A string explaining the construction. Example: 'sol (Latin, sun) + ren (Japanese, lotus)'",
-  "cluster": "stylistic grouping label",
-  "confidence": 0.85
+  "meaning": "A multi-word poetic interpretation, built using universal semantic layering (core morpheme meanings, cultural resonance, phonoaesthetics, thematic alignment).",
+  "roots": "A string explaining construction from specified languages only, with at least two fragments.",
+  "cluster": "${appState.selectedStyle}",
+  "confidence": "Calculated dynamically based on: morpheme authenticity (0.3), phonological rule adherence (0.2), semantic coherence (0.2), style consistency (0.15), cultural appropriateness (0.15)."
 }
 
-RULES
-1. Language Adherence: Use ONLY the languages provided in the task to source your morphemes. Blend them harmoniously.
-2. Style Adherence: The user will specify a single style (e.g., "Grounded & Earthy"). ALL generated names must fit this one style. Do not generate names for other styles. This is a strict filter.
-3. Gender:
-   - Unisex → neutral.
+UNIVERSAL RULES (Language-Agnostic)
+1. LINGUISTIC AUTHENTICITY: Dynamically apply authentic phonological and morphological constraints based on the user's selected languages (e.g., vowel harmony for Turkic, consonant clusters for Germanic, etc.).
+2. STYLE IMPLEMENTATION: Apply the user's selected style through linguistic features (e.g., 'Heavy' styles use consonant clusters and back vowels; 'Light' styles use open syllables and front vowels).
+3. CULTURAL SENSITIVITY: Research the cultural context of morphemes. Avoid sacred or sensitive terms. Ensure respectful representation.
+4. GENDER:
+   - Unisex → neutral sounds.
    - Male → consonant-strong, firm endings.
-   - Female → vowel-rich, melodic.
-4. Roots Breakdown: This is critical. The "roots" field must be a string that explains the construction. Example: "sol (Latin, sun) + ren (Japanese, lotus)".
-5. Clusters: Always include (e.g., “Airy & Flowing”, “Mythic & Cosmic”).
-6. Name length: 4–10 letters, 2–3 syllables preferred.
-7. Variants mode: Keep ≥50% phonetic overlap with the source name, but shift thematic resonance.
-8. Harmonize with surname and sibling names if provided.
+   - Female → vowel-rich, melodic flow.
+5. ROOTS BREAKDOWN: Must explain construction using ≥2 morphemes from the specified languages.
+6. CLUSTER: Set to "${appState.selectedStyle}" for ALL names.
+7. NAME SPECS: 4–10 letters, 2–3 syllables.
+8. CONTEXTUAL HARMONY: Analyze the user's provided context (surname, sibling names, first name for middle name) to ensure the generated name fits harmoniously.
+   - Full Name Cadence: When generating any name part, consider the full potential name (\`[First] [Middle] [Last]\`). The final combination should have a pleasing rhythm and avoid phonetic clashes. This is especially critical for middle names.
+   - Sibling Synergy: When generating a first name and sibling names are provided, analyze their phonetic and stylistic patterns. The new name should feel like a natural, complementary addition to the existing set.
 
 TASK:
 ${task}
@@ -588,20 +582,20 @@ ${task}
 
     let task;
     const allLangs = [...new Set([...appState.selectedLanguages, ...appState.userLanguages])];
-    
+
     if (mode === 'middle') {
         if (!appState.firstNameForMiddle) { appState.error = "Please provide a first name to generate middle names."; appState.isLoading = false; updateResultsPanel(); return; }
-        task = `Generate ${DEFAULT_COUNT} middle names for "${appState.firstNameForMiddle}". Consider themes: ${appState.selectedThemes.join(', ')} and style: ${appState.selectedStyle}.`;
+        task = `Generate ${DEFAULT_COUNT} middle names for "${appState.firstNameForMiddle}" using morphemes exclusively from these languages: ${allLangs.join(', ')}. All names must embody the "${appState.selectedStyle}" style. Draw thematic inspiration from: ${appState.selectedThemes.join(', ')}.`;
     } else if (mode === 'variants') {
-        task = `Generate ${DEFAULT_COUNT} variants of the name "${contextName}", keeping a similar phonetic and thematic feel. Use languages ${allLangs.join(', ')}.`;
+        task = `Generate ${DEFAULT_COUNT} variants of the name "${contextName}" using morphemes exclusively from these languages: ${allLangs.join(', ')}. Maintain similar phonetic feel while embodying the "${appState.selectedStyle}" style throughout.`;
     } else if (appState.likedNames.length > 0) {
         const likedStr = appState.likedNames.map(n => n.name).join(', ');
-        task = `Analyze these liked names: ${likedStr}. Generate ${DEFAULT_COUNT} new names in a similar style, using themes of ${appState.selectedThemes.join(', ')}.`;
+        task = `Analyze these liked names: ${likedStr}. Generate ${DEFAULT_COUNT} new names that embody the "${appState.selectedStyle}" style using morphemes exclusively from these languages: ${allLangs.join(', ')}. Draw thematic inspiration from: ${appState.selectedThemes.join(', ')}.`;
     } else {
-        task = `Invent ${DEFAULT_COUNT} names that STRICTLY adhere to the "${appState.selectedStyle}" style. Use only the following languages to create new, blended names: ${allLangs.join(', ')}. Themes for inspiration: ${appState.selectedThemes.join(', ')}.`;
+        task = `Generate ${DEFAULT_COUNT} original names that embody the "${appState.selectedStyle}" style using morphemes exclusively from these languages: ${allLangs.join(', ')}. Draw thematic inspiration from: ${appState.selectedThemes.join(', ')}.`;
     }
-    if (appState.siblingNames) task += ` Keep stylistically compatible with siblings: ${appState.siblingNames}.`;
-    if (appState.surname) task += ` Harmonize with surname: ${appState.surname}.`;
+    if (appState.siblingNames) task += ` Harmonize stylistically with existing siblings: ${appState.siblingNames}.`;
+    if (appState.surname) task += ` Consider compatibility with surname: ${appState.surname}.`;
     
     let prompt = buildSystemPrompt(task, appState.gender, appState.sessionGeneratedNames);
     try {
