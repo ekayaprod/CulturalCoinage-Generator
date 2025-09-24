@@ -500,7 +500,7 @@
   }
 
   function showToast(msg) {
-    const t = el('div','fixed bottom-6 left-1-2 -translate-x-1/2 bg-[#0f2a41] px-4 py-2 rounded shadow text-sm fade');
+    const t = el('div','fixed bottom-6 left-1-2 -translate-x-1-2 bg-[#0f2a41] px-4 py-2 rounded shadow text-sm fade');
     t.textContent = msg; document.body.appendChild(t);
     setTimeout(()=> t.remove(), 1400);
   }
@@ -522,6 +522,19 @@ Before generating, perform these steps:
 2. Research authentic morphological and phonological patterns for those language families.
 3. Consider the cultural context and historical relationships of the selected languages.
 4. Apply this researched knowledge consistently across all generated names.
+
+QUALITY GATES:
+Before finalizing each name, verify:
+- Each morpheme can be traced to a specific word in the source languages
+- Phonological combinations are possible in at least one of the source languages
+- No morpheme meanings contradict each other semantically
+- The overall sound pattern fits the selected style's acoustic profile
+
+FALLBACK PROTOCOL:
+If authentic morphemes cannot be identified for a selected language:
+1. Focus on the languages you do have morphemes for
+2. Note the limitation in the roots field
+3. Maintain confidence scoring transparency about this limitation
 
 MISSION
 - Invent COMPLETELY NEW, poetic, pronounceable ${gender || "unisex"} names.
