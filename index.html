@@ -24,32 +24,19 @@
 
   <script>
 /**
- * Cultural Coinage Generator — fixed version
- *
- * Philosophy (embedded):
- * - Cultural coinage = blending linguistic roots and phonetic textures from selected origins
- *   (Turkish, Nordic, Latin, Celtic, etc.) with themes (cosmic, nature, balance, strength).
- * - Names are artifacts: pronounceable in English, evocative (poetic meanings), short (4-10 letters),
- *   2-3 syllables preferred, culturally respectful, and avoid awkward English collisions.
- * - This comment is intentionally part of the code so future LLMs see the project's "north star".
- *
- * Important engineering choices:
- * - Use single-request generation (robust parsing) rather than fragile streaming JSON assembly.
- * - If JSON parsing fails, attempt fenced-block stripping and a regex fallback to salvage useful tokens.
- * - Do not auto-reset UI on failure; display error with partial output for debugging and let user retry.
+ * Cultural Coinage Generator — Full-Featured Version
+ * Philosophy: Blend linguistic roots (e.g., Turkish, Nordic) with themes (cosmic, nature)
+ * to create evocative, pronounceable, and culturally respectful names.
  */
 
 (function () {
   // --- CONFIG ---
   const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-preview-05-20:generateContent";
   const DEFAULT_COUNT = 6;
-
-  // Options
   const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Slavic","Japanese","Greek","Sanskrit","Arabic"];
-  const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music"];
-  const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant"];
-
-  // System blacklist (lowercase). Expandable via UI in future.
+  // EXPANDED: Added more theme and style options for greater creativity.
+  const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music", "Fire", "Mountain", "Ocean", "Sky", "Forest", "Mythic"];
+  const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant", "Elegant & Refined", "Grounded & Earthy", "Mystical & Ethereal"];
   const SYSTEM_BLACKLIST = ["tuna","ilay","baran","nur","solren","kuzel","anal"];
 
   // --- State ---
@@ -57,108 +44,108 @@
     apiKey: "",
     isLoading: false,
     error: null,
-    results: [],        // array of {name, meaning, roots, score}
+    results: [],
+    likedNames: [],
     selectedLanguages: ["Celtic", "Sanskrit"],
     selectedThemes: ["Light","Balance"],
     selectedStyle: "Lyrical & Melodic",
-    userBlacklist: [],  // user can add bad tokens in future (not UI yet)
+    surname: "",
+    siblingNames: "",
+    firstNameForMiddle: "",
+    userLanguages: [], // NEW: Stores custom user-added languages
   };
 
   // --- Helpers ---
   const el = (tag, cls='') => { const d = document.createElement(tag); if (cls) d.className = cls; return d; };
   function setText(node, txt){ node.textContent = txt ?? ''; }
+  
+  function saveState() {
+    try {
+        const stateToSave = {
+            apiKey: appState.apiKey,
+            selectedLanguages: appState.selectedLanguages,
+            selectedThemes: appState.selectedThemes,
+            selectedStyle: appState.selectedStyle,
+            likedNames: appState.likedNames,
+            userLanguages: appState.userLanguages, // Persist custom languages
+            // Persist context fields
+            surname: appState.surname,
+            siblingNames: appState.siblingNames,
+            firstNameForMiddle: appState.firstNameForMiddle,
+        };
+        localStorage.setItem('culturalCoinageState', JSON.stringify(stateToSave));
+    } catch (e) {
+        console.warn("Could not save state to localStorage:", e);
+    }
+  }
+
+  function loadState() {
+      try {
+        const saved = localStorage.getItem('culturalCoinageState');
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            // Ensure array properties default to empty arrays if null/undefined
+            parsed.likedNames = parsed.likedNames || [];
+            parsed.userLanguages = parsed.userLanguages || [];
+            Object.assign(appState, parsed);
+        }
+      } catch (e) {
+          console.warn("Could not load state from localStorage:", e);
+      }
+  }
+
   function tidyJSONText(text) {
     if (!text) return "";
-    // Remove markdown fenced blocks (```json ... ``` and ``` ... ```)
     let t = text.replace(/```[\s\S]*?```/g, '');
-    // Remove leading junk before the first JSON bracket
     const firstBracket = t.search(/[\[\{]/);
     if (firstBracket > 0) t = t.slice(firstBracket);
-    // Remove trailing junk after last closing bracket
     const lastBracket = Math.max(t.lastIndexOf(']'), t.lastIndexOf('}'));
-    if (lastBracket !== -1) t = t.slice(0, lastBracket+1);
+    if (lastBracket !== -1) t = t.slice(0, lastBracket + 1);
     return t.trim();
   }
+
   function safeParseJSONArray(text) {
     const cleaned = tidyJSONText(text);
     if (!cleaned) return null;
     try { const parsed = JSON.parse(cleaned); return Array.isArray(parsed) ? parsed : null; }
     catch(e){ return null; }
   }
+
   function regexFallbackExtract(text) {
-    // extract patterns like "Name": "Evren", "meaning": "..." OR simple lines: Evren - "meaning"
     const results = [];
     const nameMeanRe = /"name"\s*:\s*"([^"]+)"[\s\S]*?"meaning"\s*:\s*"([^"]+)"/gi;
     let m;
     while ((m = nameMeanRe.exec(text)) !== null) {
       results.push({ name: m[1], meaning: m[2], roots: "" });
     }
-    if (results.length) return results;
-    // fallback: lines like Evren — "meaning"
-    const lineRe = /^([A-Z][a-zA-Z\-]{2,10})\s*[-—]\s*["“']?(.{3,120})["”']?$/gm;
-    while ((m = lineRe.exec(text)) !== null) {
-      results.push({ name: m[1], meaning: m[2], roots: "" });
-    }
-    // final fallback: simple capitalized words
-    if (!results.length) {
-      const words = (text.match(/\b[A-Z][a-z]{3,9}\b/g) || []);
-      for (const w of words) results.push({ name: w, meaning: "", roots: "" });
-    }
     return results;
-  }
-
-  function syllableCount(word) {
-    if (!word) return 1;
-    let w = word.toLowerCase();
-    if (w.length <= 3) return 1;
-    w = w.replace(/(?:[^laeiouy]es|ed|[^laeiouy]e)$/, '');
-    w = w.replace(/^y/, '');
-    const m = w.match(/[aeiouy]{1,2}/g);
-    return m ? m.length : 1;
   }
 
   function scoreName(obj) {
     let s = 0;
     if (!obj || !obj.name) return 0;
-    if (obj.name.length >= 4 && obj.name.length <= 10) s += 2;
-    const syl = syllableCount(obj.name);
-    if (syl >= 2 && syl <= 3) s += 2;
-    if (/^[A-Za-z\-]+$/.test(obj.name)) s += 1;
-    if (obj.meaning && obj.meaning.length > 6) s += 1;
-    if (obj.roots && obj.roots.length > 0) s += 1;
-    // small penalty for containing blacklisted substrings
     const low = obj.name.toLowerCase();
-    for (const b of SYSTEM_BLACKLIST.concat(appState.userBlacklist)) {
-      if (low.includes(b)) s -= 10;
-    }
+    if (SYSTEM_BLACKLIST.some(b => low.includes(b))) return -10;
+    if (obj.name.length >= 4 && obj.name.length <= 10) s += 2;
+    const syl = (obj.name.toLowerCase().match(/[aeiouy]{1,2}/g) || []).length;
+    if (syl >= 2 && syl <= 3) s += 2;
+    if (obj.meaning?.length > 6) s += 1;
+    if (obj.roots?.length > 0) s += 1;
     return s;
   }
 
   function filterAndScore(rawArray) {
-    if (!rawArray || !rawArray.length) return [];
-    const out = [];
-    for (const it of rawArray) {
-      const candidate = {
-        name: (it.name || it[0] || "").toString().trim(),
-        meaning: (it.meaning || it[1] || "").toString().trim(),
-        roots: (it.roots || it[2] || "").toString().trim()
-      };
-      if (!candidate.name) continue;
-      const low = candidate.name.toLowerCase();
-      // blacklist checks:
-      if (SYSTEM_BLACKLIST.some(b => low.includes(b))) continue;
-      if (appState.userBlacklist.some(b => low.includes(b))) continue;
-      // length check
-      if (candidate.name.length < 4 || candidate.name.length > 12) {
-        // allow but penalize
-        candidate.score = scoreName(candidate) - 1;
-      } else {
-        candidate.score = scoreName(candidate);
-      }
-      out.push(candidate);
-    }
-    out.sort((a,b)=> b.score - a.score);
-    return out;
+    if (!rawArray?.length) return [];
+    return rawArray
+        .map(it => ({
+            name: (it.name || "").toString().trim(),
+            meaning: (it.meaning || "").toString().trim(),
+            roots: (it.roots || "").toString().trim()
+        }))
+        .filter(candidate => candidate.name)
+        .map(candidate => ({ ...candidate, score: scoreName(candidate) }))
+        .filter(candidate => candidate.score > 0)
+        .sort((a,b) => b.score - a.score);
   }
 
   // --- UI Construction ---
@@ -167,165 +154,232 @@
   function renderLayout() {
     root.innerHTML = '';
     const appWrap = el('div','max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6');
-
-    // Left controls
-    const left = el('div','md:col-span-1 bg-[#071425] border border-[#0e2334] rounded-xl p-5 flex flex-col gap-4 h-fit');
-    const title = el('div','flex items-center justify-between');
-    const h = el('div','');
-    const titleMain = el('h1','text-xl font-semibold'); setText(titleMain, 'Cultural Coinage');
-    const subtitle = el('div','small-muted mt-1'); setText(subtitle, 'Blend culture, sound & meaning — poetic, modern, balanced');
-    h.append(titleMain, subtitle);
-    title.append(h, el('div','small-muted')); // spacer
-
-    // API Key
-    const labelKey = el('label','text-sm font-medium'); setText(labelKey,'Gemini API Key');
-    const inputKey = el('input','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
-    inputKey.type='password'; inputKey.placeholder='Paste API key (kept in-memory)';
-    inputKey.value = appState.apiKey;
-    inputKey.addEventListener('input', e => appState.apiKey = e.target.value.trim());
-
-    // Languages chips
-    const labelLang = el('label','text-sm font-medium'); setText(labelLang,'Languages (choose 1–3)');
-    const langWrap = el('div','flex flex-wrap gap-2');
-    LANG_OPTIONS.forEach(opt=>{
-      const c = el('button','chip'); c.textContent = opt;
-      if (appState.selectedLanguages.includes(opt)) c.classList.add('active');
-      c.addEventListener('click', ()=>{
-        if (appState.selectedLanguages.includes(opt)) {
-          appState.selectedLanguages = appState.selectedLanguages.filter(x=>x!==opt);
-        } else {
-          appState.selectedLanguages = [...appState.selectedLanguages, opt].slice(0,3);
-        }
-        renderLayout();
-      });
-      langWrap.append(c);
-    });
-
-    // Themes
-    const labelTheme = el('label','text-sm font-medium'); setText(labelTheme,'Themes (choose 1–2)');
-    const themeWrap = el('div','flex flex-wrap gap-2');
-    THEME_OPTIONS.forEach(opt=>{
-      const c = el('button','chip'); c.textContent = opt;
-      if (appState.selectedThemes.includes(opt)) c.classList.add('active');
-      c.addEventListener('click', ()=>{
-        if (appState.selectedThemes.includes(opt)) {
-          appState.selectedThemes = appState.selectedThemes.filter(x=>x!==opt);
-        } else {
-          appState.selectedThemes = [...appState.selectedThemes, opt].slice(0,2);
-        }
-        renderLayout();
-      });
-      themeWrap.append(c);
-    });
-
-    // Style select
-    const labelStyle = el('label','text-sm font-medium'); setText(labelStyle,'Style');
-    const styleSel = el('select','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
-    STYLE_OPTIONS.forEach(s=>{
-      const op = el('option'); op.value = s; setText(op,s);
-      if (appState.selectedStyle === s) op.selected = true;
-      styleSel.append(op);
-    });
-    styleSel.addEventListener('change', e => { appState.selectedStyle = e.target.value; });
-
-    // Buttons
-    const btnWrap = el('div','flex gap-3 mt-2');
-    const genBtn = el('button','bg-gradient-to-r from-[#3b82f6] to-[#2563eb] text-[#03102a] px-4 py-2 rounded font-semibold shadow');
-    setText(genBtn, 'Generate');
-    genBtn.addEventListener('click', () => doGenerate());
-
-    const exportBtn = el('button','bg-[#0e2436] border border-[#1b3146] px-3 py-2 rounded text-sm small-muted');
-    setText(exportBtn, 'Export CSV');
-    exportBtn.addEventListener('click', exportCSV);
-
-    const clearBtn = el('button','bg-transparent border border-[#233542] px-3 py-2 rounded text-sm small-muted');
-    setText(clearBtn,'Clear Results');
-    clearBtn.addEventListener('click', ()=>{ appState.results=[]; appState.error=null; renderLayout(); });
-
-    btnWrap.append(genBtn, exportBtn, clearBtn);
-
-    // Left assemble
-    left.append(title, labelKey, inputKey, labelLang, langWrap, labelTheme, themeWrap, labelStyle, styleSel, btnWrap);
-    // small philosophy toggle
-    const philToggle = el('div','mt-3 text-sm small-muted'); philToggle.innerHTML = 'Tip: names pair well with <strong>Nova</strong> & <strong>Wren</strong>.';
-    left.append(philToggle);
-
-    // Right content area
-    const right = el('div','md:col-span-2 bg-[#071427] border border-[#0e2030] rounded-xl p-5 flex flex-col gap-4');
-    // top bar
-    const topBar = el('div','flex items-center justify-between');
-    const resultsTitle = el('div',''); resultsTitle.innerHTML = '<h2 class="text-lg font-semibold">Results</h2><div class="small-muted">Poetic, culturally coined names</div>';
-    topBar.append(resultsTitle);
-    right.append(topBar);
-
-    // Results / status panel
-    const panel = el('div','mt-2 p-3 bg-[#071a25] border border-[#0f2a3a] rounded-lg min-h-[280px] flex flex-col gap-3');
-    // If loading show spinner
-    if (appState.isLoading) {
-      const sp = el('div','flex items-center justify-center py-8'); sp.innerHTML = '<div class="spinner"></div>';
-      panel.append(sp);
-    } else if (appState.error) {
-      const err = el('div','bg-[#2b1a1a] border border-[#5b2626] rounded p-4');
-      err.innerHTML = `<div class="text-red-300 font-semibold">Error</div><div class="small-muted mt-2">${escapeHtml(appState.error)}</div>`;
-      // display partial raw output if present in state
-      panel.append(err);
-    } else if (!appState.results || !appState.results.length) {
-      const empty = el('div','flex-1 flex items-center justify-center small-muted'); setText(empty,'No names yet — click Generate.');
-      panel.append(empty);
-    } else {
-      // grid of cards
-      const grid = el('div','grid grid-cols-1 sm:grid-cols-2 gap-4');
-      for (const item of appState.results) {
-        const card = el('div','bg-[#081426] border border-[#123047] rounded p-4 flex flex-col gap-2 fade');
-        const head = el('div','flex items-start justify-between gap-2');
-        const nameEl = el('div','text-xl font-semibold'); setText(nameEl, item.name);
-        const scoreBadge = el('div','text-xs px-2 py-1 rounded bg-[#0f2040] small-muted'); setText(scoreBadge, 'score: '+ (item.score||0));
-        head.append(nameEl, scoreBadge);
-        const meaning = el('div','italic small-muted'); setText(meaning, item.meaning || '—');
-        const roots = el('div','text-xs mt-auto small-muted'); roots.innerHTML = '<strong>Roots:</strong> '+ (item.roots || '—');
-        const actions = el('div','flex gap-2 mt-2');
-        const copy = el('button','chip'); copy.textContent = 'Copy'; copy.addEventListener('click', ()=>{ navigator.clipboard.writeText(item.name); showToast('Copied'); });
-        actions.append(copy);
-        card.append(head, meaning, roots, actions);
-        grid.append(card);
-      }
-      panel.append(grid);
-    }
-
-    right.append(panel);
-
-    appWrap.append(left, right);
+    appWrap.append(renderControlsPanel(), renderResultsPanel());
     root.append(appWrap);
   }
+  
+  function renderControlsPanel() {
+      const left = el('div','md:col-span-1 bg-[#071425] border border-[#0e2334] rounded-xl p-5 flex flex-col gap-4 h-fit');
+      
+      const title = el('div');
+      title.innerHTML = `<h1 class="text-xl font-semibold">Cultural Coinage</h1><div class="small-muted mt-1">Blend culture, sound & meaning</div>`;
+      
+      const apiKeySection = el('div');
+      apiKeySection.innerHTML = `<label class="text-sm font-medium">Gemini API Key</label>`;
+      const inputKey = el('input','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm mt-1');
+      inputKey.type = 'password'; inputKey.placeholder = 'Paste API key';
+      inputKey.value = appState.apiKey;
+      inputKey.addEventListener('change', e => {
+          appState.apiKey = e.target.value.trim();
+          saveState();
+      });
+      apiKeySection.append(inputKey);
 
-  // small utility to show ephemeral toast
+      const contextSection = el('div');
+      contextSection.innerHTML = `<label class="text-sm font-medium">Real-World Context (Optional)</label>`;
+      const contextGrid = el('div', 'grid grid-cols-2 gap-2 mt-1');
+      const surnameInput = el('input', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
+      surnameInput.placeholder = "Surname";
+      surnameInput.value = appState.surname;
+      surnameInput.addEventListener('change', e => {appState.surname = e.target.value; saveState();});
+      const siblingsInput = el('input', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
+      siblingsInput.placeholder = "Sibling Names";
+      siblingsInput.value = appState.siblingNames;
+      siblingsInput.addEventListener('change', e => {appState.siblingNames = e.target.value; saveState();});
+      const middleNameInput = el('input', 'col-span-2 w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
+      middleNameInput.placeholder = "First Name (for middle names)";
+      middleNameInput.value = appState.firstNameForMiddle;
+      middleNameInput.addEventListener('change', e => {appState.firstNameForMiddle = e.target.value; saveState();});
+      contextGrid.append(surnameInput, siblingsInput, middleNameInput);
+      contextSection.append(contextGrid);
+
+      // NEW: Custom languages section replaces the old chip selector call
+      const languagesSection = renderLanguagesSection();
+      const themesSection = createChipSelector('Themes (choose 1–2)', THEME_OPTIONS, 'selectedThemes', 2);
+      
+      const styleSection = el('div');
+      styleSection.innerHTML = `<label class="text-sm font-medium">Style</label>`;
+      const styleSel = el('select','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm mt-1');
+      STYLE_OPTIONS.forEach(s => {
+          const op = el('option'); op.value = s; op.textContent = s;
+          if (appState.selectedStyle === s) op.selected = true;
+          styleSel.append(op);
+      });
+      styleSel.addEventListener('change', e => {
+          appState.selectedStyle = e.target.value;
+          saveState();
+      });
+      styleSection.append(styleSel);
+
+      const btnWrap = el('div','flex flex-wrap gap-2 mt-2');
+      const genBtn = el('button','bg-gradient-to-r from-[#3b82f6] to-[#2563eb] text-white px-4 py-2 rounded font-semibold shadow flex-1');
+      genBtn.textContent = appState.likedNames.length > 0 ? 'Riff on Liked' : 'Generate Names';
+      genBtn.addEventListener('click', () => doGenerate('first'));
+      
+      const middleBtn = el('button','bg-[#1e3a8a] text-white px-4 py-2 rounded font-semibold shadow');
+      middleBtn.textContent = 'Middle Names';
+      middleBtn.addEventListener('click', () => doGenerate('middle'));
+      
+      const exportBtn = el('button','bg-[#0e2436] border border-[#1b3146] px-3 py-2 rounded text-sm small-muted');
+      exportBtn.textContent = 'Export';
+      exportBtn.addEventListener('click', exportCSV);
+
+      const clearBtn = el('button','bg-transparent border border-[#233542] px-3 py-2 rounded text-sm small-muted');
+      clearBtn.textContent = 'Clear';
+      clearBtn.addEventListener('click', ()=>{ appState.results=[]; appState.error=null; renderLayout(); });
+      btnWrap.append(genBtn, middleBtn, exportBtn, clearBtn);
+      
+      left.append(title, apiKeySection, contextSection, languagesSection, themesSection, styleSection, renderLikedNamesSection(), btnWrap);
+      return left;
+  }
+  
+  // NEW: Dedicated function for rendering the languages section with custom input
+  function renderLanguagesSection() {
+      const section = el('div');
+      section.innerHTML = `<label class="text-sm font-medium">Languages (choose 1–3)</label>`;
+      const wrap = el('div', 'flex flex-wrap gap-2 mt-1');
+      
+      const allLangs = [...new Set([...LANG_OPTIONS, ...appState.userLanguages])];
+
+      allLangs.forEach(opt => {
+          const c = el('button', 'chip'); c.textContent = opt;
+          if (appState.selectedLanguages.includes(opt)) c.classList.add('active');
+          c.addEventListener('click', () => {
+              if (appState.selectedLanguages.includes(opt)) {
+                  appState.selectedLanguages = appState.selectedLanguages.filter(x => x !== opt);
+              } else {
+                  appState.selectedLanguages = [...appState.selectedLanguages, opt].slice(-3);
+              }
+              saveState();
+              renderLayout();
+          });
+          wrap.append(c);
+      });
+
+      const addLangWrap = el('div', 'flex gap-2 mt-2');
+      const langInput = el('input', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
+      langInput.placeholder = 'Add a language...';
+      const addBtn = el('button', 'bg-[#0e2436] border border-[#1b3146] px-3 py-2 rounded text-sm small-muted');
+      addBtn.textContent = 'Add';
+      addBtn.addEventListener('click', () => {
+          const newLang = langInput.value.trim();
+          if (newLang && !allLangs.map(l => l.toLowerCase()).includes(newLang.toLowerCase())) {
+              appState.userLanguages.push(newLang);
+              appState.selectedLanguages = [...appState.selectedLanguages, newLang].slice(-3);
+              saveState();
+              renderLayout();
+          }
+          langInput.value = '';
+      });
+      addLangWrap.append(langInput, addBtn);
+      
+      section.append(wrap, addLangWrap);
+      return section;
+  }
+
+  function createChipSelector(label, options, stateKey, max) {
+      const section = el('div');
+      section.innerHTML = `<label class="text-sm font-medium">${label}</label>`;
+      const wrap = el('div', 'flex flex-wrap gap-2 mt-1');
+      options.forEach(opt => {
+          const c = el('button', 'chip'); c.textContent = opt;
+          if (appState[stateKey].includes(opt)) c.classList.add('active');
+          c.addEventListener('click', () => {
+              if (appState[stateKey].includes(opt)) {
+                  appState[stateKey] = appState[stateKey].filter(x => x !== opt);
+              } else {
+                  appState[stateKey] = [...appState[stateKey], opt].slice(-max);
+              }
+              saveState();
+              renderLayout();
+          });
+          wrap.append(c);
+      });
+      section.append(wrap);
+      return section;
+  }
+
+  function renderLikedNamesSection() {
+    const container = el('div');
+    if (appState.likedNames.length > 0) {
+        container.innerHTML = `<label class="text-sm font-medium">Liked Names (Inspiration)</label>`;
+        const wrap = el('div', 'flex flex-wrap gap-2 mt-1');
+        appState.likedNames.forEach(nameObj => {
+            const chip = el('div', 'chip active flex items-center gap-2');
+            chip.innerHTML = `<span>${nameObj.name}</span><button class="font-mono text-xs opacity-70" data-name="${nameObj.name}">x</button>`;
+            chip.querySelector('button').addEventListener('click', e => {
+                const nameToRemove = e.target.dataset.name;
+                appState.likedNames = appState.likedNames.filter(n => n.name !== nameToRemove);
+                saveState();
+                renderLayout();
+            });
+            wrap.append(chip);
+        });
+        container.append(wrap);
+    }
+    return container;
+  }
+
+  function renderResultsPanel() {
+      const right = el('div','md:col-span-2 bg-[#071427] border border-[#0e2030] rounded-xl p-5 flex flex-col gap-4');
+      right.innerHTML = '<div><h2 class="text-lg font-semibold">Results</h2><div class="small-muted">Poetic, culturally coined names</div></div>';
+
+      const panel = el('div','mt-2 p-3 bg-[#071a25] border border-[#0f2a3a] rounded-lg min-h-[280px] flex flex-col gap-3');
+      if (appState.isLoading) {
+          panel.innerHTML = '<div class="flex items-center justify-center py-8"><div class="spinner"></div></div>';
+      } else if (appState.error) {
+          panel.innerHTML = `<div class="bg-[#2b1a1a] border border-[#5b2626] rounded p-4"><div class="text-red-300 font-semibold">Error</div><div class="small-muted mt-2">${escapeHtml(appState.error)}</div></div>`;
+      } else if (!appState.results.length) {
+          panel.innerHTML = '<div class="flex-1 flex items-center justify-center small-muted">No names yet — click Generate.</div>';
+      } else {
+          const grid = el('div','grid grid-cols-1 sm:grid-cols-2 gap-4');
+          appState.results.forEach(item => grid.append(createNameCard(item)));
+          panel.append(grid);
+      }
+      right.append(panel);
+      return right;
+  }
+
+  function createNameCard(item) {
+      const isLiked = appState.likedNames.some(n => n.name === item.name);
+      const card = el('div','bg-[#081426] border border-[#123047] rounded p-4 flex flex-col gap-2 fade');
+      card.innerHTML = `<div class="flex items-start justify-between gap-2"><div class="text-xl font-semibold">${item.name}</div><div class="text-xs px-2 py-1 rounded bg-[#0f2040] small-muted">score: ${item.score}</div></div><div class="italic small-muted">${item.meaning || '—'}</div><div class="text-xs mt-auto small-muted"><strong>Roots:</strong> ${item.roots || '—'}</div>`;
+      const actions = el('div', 'flex gap-2 mt-2');
+      const copyBtn = el('button', 'chip'); copyBtn.textContent = 'Copy';
+      copyBtn.addEventListener('click', () => { navigator.clipboard.writeText(item.name); showToast('Copied!'); });
+      const likeBtn = el('button', `chip ${isLiked ? 'active' : ''}`); likeBtn.innerHTML = `&hearts; Like`;
+      likeBtn.addEventListener('click', () => {
+          if (isLiked) {
+              appState.likedNames = appState.likedNames.filter(n => n.name !== item.name);
+          } else {
+              appState.likedNames.push(item);
+          }
+          saveState();
+          renderLayout();
+      });
+      actions.append(copyBtn, likeBtn);
+      card.append(actions);
+      return card;
+  }
+
   function showToast(msg) {
-    const t = el('div','fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#0f2a41] px-4 py-2 rounded shadow text-sm'); setText(t,msg);
+    const t = el('div','fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#0f2a41] px-4 py-2 rounded shadow text-sm fade');
+    t.textContent = msg;
     document.body.appendChild(t);
-    setTimeout(()=> t.remove(),1400);
+    setTimeout(()=> t.remove(), 1400);
   }
 
   function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-  // --- Generation & API calls ---
   function buildSystemPrompt(task) {
-    // full, philosophy-aware system prompt for Gemini
-    return `
-You are the Cultural Coinage Agent: craft short, poetic, pronounceable unisex names by blending the specified language origins and themes.
-Return output as a JSON array (only JSON). Each element is an object: {"name":"", "meaning":"", "roots":""}.
-Names should be 4–10 letters, 2–3 syllables preferred, culturally respectful, evocative (poetic meanings).
-Task: ${task}
-`;
+    return `You are the Cultural Coinage Agent: craft short, poetic, pronounceable unisex names by blending the specified language origins and themes. Return output as a JSON array (only JSON). Each element is an object: {"name":"", "meaning":"", "roots":""}. Names should be 4–10 letters, 2–3 syllables preferred, culturally respectful, evocative (poetic meanings). Task: ${task}`;
   }
 
   async function callGeminiOnce(prompt) {
-    // Single generation call (non-streaming). Returns the raw text response or throws.
     const key = appState.apiKey.trim();
     if (!key) throw new Error('Missing API key.');
     const body = {
-      // The API shape used by your prior files: contents -> parts -> text
       contents: [{ parts: [{ text: prompt }] }],
-      // generationConfig is optional; tune for quality
       generationConfig: { temperature: 0.6, maxOutputTokens: 800, candidateCount: 1 }
     };
     const res = await fetch(API_BASE_URL + '?key=' + encodeURIComponent(key), {
@@ -333,65 +387,51 @@ Task: ${task}
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) {
-      const txt = await res.text(); throw new Error(`Gemini API error ${res.status}: ${txt}`);
-    }
+    if (!res.ok) throw new Error(`Gemini API error ${res.status}: ${await res.text()}`);
     const data = await res.json();
-    // tolerant extraction:
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? data?.output ?? JSON.stringify(data);
-    return String(text);
+    return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
   }
 
-  async function doGenerate() {
-    // Build task description based on user selections
+  async function doGenerate(mode = 'first') {
+    if (!appState.apiKey) {
+        appState.error = "Please enter your Gemini API key to begin.";
+        renderLayout();
+        return;
+    }
     appState.error = null;
     appState.results = [];
     appState.isLoading = true;
     renderLayout();
 
-    const taskParts = [
-      `Languages: ${appState.selectedLanguages.join(', ')}`,
-      `Themes: ${appState.selectedThemes.join(', ')}`,
-      `Style: ${appState.selectedStyle}`,
-      `Return ${DEFAULT_COUNT} names.`
-    ];
-    const task = taskParts.join(' | ');
-    const prompt = buildSystemPrompt(task);
-
-    try {
-      // Primary generation
-      const raw = await callGeminiOnce(prompt);
-      // Attempt to parse JSON array
-      let parsed = safeParseJSONArray(raw);
-      if (!parsed) {
-        // fallback parse attempts
-        parsed = regexFallbackExtract(raw);
-      }
-      let processed = filterAndScore(parsed || []);
-      // If too few good candidates, retry with simplified prompt preserving languages/themes
-      if (!processed.length || processed.length < Math.min(3, DEFAULT_COUNT)) {
-        const simplifiedTask = `Generate ${DEFAULT_COUNT} short unisex poetic names using languages: ${appState.selectedLanguages.join(', ')} and themes: ${appState.selectedThemes.join(', ')}. Keep it simple, return JSON array of objects with name, meaning, roots.`;
-        const raw2 = await callGeminiOnce(buildSystemPrompt(simplifiedTask));
-        let parsed2 = safeParseJSONArray(raw2) || regexFallbackExtract(raw2);
-        const processed2 = filterAndScore(parsed2 || []);
-        if (processed2 && processed2.length) {
-          processed = processed2;
-        } else {
-          // preserve partial parsing if available
-          if (!processed.length && parsed && parsed.length) processed = filterAndScore(parsed);
+    let task;
+    const allLangs = [...new Set([...appState.selectedLanguages, ...appState.userLanguages])];
+    
+    if (mode === 'middle') {
+        if (!appState.firstNameForMiddle) {
+            appState.error = "Please provide a first name to generate middle names.";
+            appState.isLoading = false;
+            renderLayout();
+            return;
         }
-      }
-
-      if (!processed || !processed.length) {
-        appState.error = "No suitable names generated. The raw model output is shown for debugging.";
-        // Include raw in results area as debug
-        appState.results = [];
-        // attach raw debug (for UI show)
-        appState._rawDebug = tidyJSONText(raw) || '(empty)';
-      } else {
-        appState.results = processed;
-        appState._rawDebug = null;
-      }
+        task = `Generate ${DEFAULT_COUNT} middle names for the first name "${appState.firstNameForMiddle}". Consider themes: ${appState.selectedThemes.join(', ')} and style: ${appState.selectedStyle}.`;
+        if (appState.surname) task += ` The full name should flow well with the surname "${appState.surname}".`;
+    } else if (appState.likedNames.length > 0) {
+        const likedStr = appState.likedNames.map(n => n.name).join(', ');
+        task = `Analyze these liked names: ${likedStr}. Generate ${DEFAULT_COUNT} new names in a similar style, using themes of ${appState.selectedThemes.join(', ')}.`;
+    } else {
+        task = `Languages: ${allLangs.join(', ')} | Themes: ${appState.selectedThemes.join(', ')} | Style: ${appState.selectedStyle} | Return ${DEFAULT_COUNT} names.`;
+    }
+    if (mode === 'first' && appState.siblingNames) task += ` Keep stylistically compatible with siblings: ${appState.siblingNames}.`;
+    if (mode === 'first' && appState.surname) task += ` Harmonize with surname: ${appState.surname}.`;
+    
+    const prompt = buildSystemPrompt(task);
+    try {
+        const raw = await callGeminiOnce(prompt);
+        let parsed = safeParseJSONArray(raw) || regexFallbackExtract(raw);
+        appState.results = filterAndScore(parsed);
+        if (!appState.results.length) {
+            appState.error = "No suitable names generated. You can try adjusting your selections.";
+        }
     } catch (err) {
       console.error('Generation error:', err);
       appState.error = err.message || String(err);
@@ -402,29 +442,23 @@ Task: ${task}
   }
 
   function exportCSV() {
-    if (!appState.results || !appState.results.length) { showToast('No results'); return; }
+    if (!appState.results.length) { showToast('No results'); return; }
     const header = ['Name','Meaning','Roots','Score'];
-    const rows = appState.results.map(r => [
-      `"${r.name.replace(/"/g,'""')}"`,
-      `"${(r.meaning||'').replace(/"/g,'""')}"`,
-      `"${(r.roots||'').replace(/"/g,'""')}"`,
-      r.score || 0
-    ].join(','));
+    const rows = appState.results.map(r => [`"${r.name.replace(/"/g,'""')}"`,`"${(r.meaning||'').replace(/"/g,'""')}"`,`"${(r.roots||'').replace(/"/g,'""')}"`, r.score].join(','));
     const csv = [header.join(','), ...rows].join('\r\n');
     const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `cultural-coinage-${Date.now()}.csv`;
+    const a = el('a'); a.href = url; a.download = `cultural-coinage-${Date.now()}.csv`;
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     showToast('Exported CSV');
   }
 
-  // --- Init and render ---
+  // --- Init ---
+  loadState();
   renderLayout();
-
-  // expose for debugging/testing
-  window.__culturalCoinage = { appState, doGenerate, exportCSV };
-
 })();
   </script>
 </body>
 </html>
+
+
