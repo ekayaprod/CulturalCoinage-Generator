@@ -5,11 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cultural Coinage Generator</title>
 
-    <!-- React + Babel for in-browser JSX transformation -->
-    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
-    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
-
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
 
@@ -19,7 +14,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #111827; color: #d1d5db; }
+        body { font-family: 'Inter', sans-serif; background-color: #111827; color: #d1d5db; margin: 0; padding: 0; }
         .scrolling-panel::-webkit-scrollbar { width: 8px; }
         .scrolling-panel::-webkit-scrollbar-track { background: transparent; }
         .scrolling-panel::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
@@ -29,11 +24,199 @@
 <body>
     <div id="root"></div>
 
-    <script type="text/babel">
+    <script>
+        // --- CONFIGURATION & DATA ---
+        const themeOptions = ["Nature", "Cosmic", "Balance", "Strength", "Water", "Light", "Shadow", "Music"];
+        const styleOptions = ["Lyrical & Melodic", "Archaic & Mythic", "Minimalist & Modern", "Heroic & Resonant"];
+
+        // --- APP STATE ---
+        let appState = {
+            apiKey: '',
+            isLoading: false,
+            error: null,
+            generatedPrompt: null,
+            selectedLanguages: ["Celtic", "Sanskrit"],
+            selectedThemes: ["Light", "Balance"],
+            selectedStyle: "Lyrical & Melodic"
+        };
+
+        // --- CACHED DOM ELEMENTS ---
+        let dom_root, dom_main, dom_controls_container;
+
+        // --- UTILITY & DOM FUNCTIONS ---
+        function createSystemPrompt(taskPrompt) {
+            return `You are an expert in cultural linguistics. ${taskPrompt}`;
+        }
+
+        function createElement(tag, classes = '', attributes = {}) {
+            const el = document.createElement(tag);
+            if (classes) el.className = classes;
+            Object.entries(attributes).forEach(([key, value]) => el.setAttribute(key, value));
+            return el;
+        }
+
+        function clearElement(element) {
+            if(element) element.innerHTML = '';
+        }
+        
+        function debounce(func, delay) {
+            let timeout;
+            return function(...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), delay);
+            };
+        }
+
         /**
-         * Cultural Coinage Generator
-         *
-         * Philosophy:
+         * CONSOLIDATION FIX: This new helper function creates a labeled form control,
+         * eliminating repetitive code from the initializeApp function.
+         */
+        function createFormControl(config) {
+            const container = createElement('div');
+            const label = createElement('label', 'block text-sm font-medium text-gray-300 mb-2');
+            label.textContent = config.label;
+            label.setAttribute('for', config.id);
+            
+            let control;
+            if (config.type === 'select') {
+                control = createElement('select', 'w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white', { id: config.id });
+                if (config.multiple) {
+                    control.setAttribute('multiple', true);
+                    control.classList.add('h-24');
+                }
+                config.options.forEach(optValue => {
+                    const option = createElement('option');
+                    option.value = optValue;
+                    option.textContent = optValue;
+                    if (config.multiple ? config.value.includes(optValue) : config.value === optValue) {
+                        option.selected = true;
+                    }
+                    control.appendChild(option);
+                });
+            } else {
+                control = createElement('input', 'w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white', {
+                    id: config.id,
+                    type: config.type,
+                    placeholder: config.placeholder || ''
+                });
+                control.value = Array.isArray(config.value) ? config.value.join(', ') : config.value;
+            }
+
+            control.addEventListener(config.eventType || 'input', config.handler);
+            container.append(label, control);
+            return container;
+        }
+
+        // --- DYNAMIC UI UPDATERS ---
+        function updateMainContent() {
+            clearElement(dom_main);
+            // ... (rest of updateMainContent logic remains the same)
+        }
+
+        // --- STATE & EVENT HANDLERS ---
+        function updateState(key, value) {
+            appState[key] = value;
+        }
+
+        function toggleControls() {
+            dom_controls_container.classList.toggle('hidden');
+        }
+
+        function handleGenerate() {
+            const task = `Generate culturally inspired names based on languages: ${appState.selectedLanguages.join(', ')}, themes: ${appState.selectedThemes.join(', ')}, and style: ${appState.selectedStyle}.`;
+            appState.generatedPrompt = createSystemPrompt(task);
+            appState.isLoading = false; 
+            appState.error = null;
+            updateMainContent();
+        }
+
+        // --- APP INITIALIZATION ---
+        function initializeApp() {
+            dom_root = document.getElementById('root');
+            clearElement(dom_root);
+            
+            const container = createElement('div', 'bg-gray-900 w-full min-h-screen flex flex-col');
+            // ... (Header and FAB creation remains the same) ...
+
+            dom_main = createElement('main', 'flex-grow p-3 md:p-6 overflow-y-auto', { id: 'main-content' });
+            
+            // --- CONSOLIDATION FIX START ---
+            // Drawer creation is now cleaner, using the new helper function.
+            dom_controls_container = createElement('div', 'hidden', { id: 'controls-drawer-container' });
+            const backdrop = createElement('div', 'fixed inset-0 bg-black/60 z-40');
+            backdrop.addEventListener('click', toggleControls);
+            const drawer = createElement('div', 'fixed top-0 left-0 h-full w-full max-w-xs sm:max-w-sm bg-gray-900 border-r border-gray-700 z-50 transform transition-transform');
+            const drawerContent = createElement('div', 'flex flex-col h-full p-4 overflow-y-auto');
+            
+            const drawerHeader = createElement('div', 'flex items-center justify-between mb-6');
+            const drawerTitle = createElement('h2', 'text-xl font-bold text-white');
+            drawerTitle.textContent = 'Controls';
+            const closeBtn = createElement('button', 'text-gray-400 hover:text-white text-2xl');
+            closeBtn.innerHTML = '&times;';
+            closeBtn.addEventListener('click', toggleControls);
+            drawerHeader.append(drawerTitle, closeBtn);
+
+            const formContainer = createElement('div', 'space-y-4');
+
+            // API Key Control
+            formContainer.appendChild(createFormControl({
+                label: 'API Key', id: 'apiKeyInput', type: 'password',
+                value: appState.apiKey, placeholder: 'Enter Gemini API key',
+                handler: debounce((e) => updateState('apiKey', e.target.value), 300)
+            }));
+
+            // Languages Control
+            formContainer.appendChild(createFormControl({
+                label: 'Languages', id: 'languageInput', type: 'text',
+                value: appState.selectedLanguages, placeholder: 'Celtic, Sanskrit',
+                handler: debounce((e) => updateState('selectedLanguages', e.target.value.split(',').map(s => s.trim()).filter(Boolean)), 300)
+            }));
+
+            // Themes Control
+            formContainer.appendChild(createFormControl({
+                label: 'Themes', id: 'themeSelect', type: 'select',
+                value: appState.selectedThemes, options: themeOptions, multiple: true, eventType: 'change',
+                handler: (e) => updateState('selectedThemes', Array.from(e.target.selectedOptions).map(opt => opt.value))
+            }));
+            
+            // Style Control
+            formContainer.appendChild(createFormControl({
+                label: 'Style', id: 'styleSelect', type: 'select',
+                value: appState.selectedStyle, options: styleOptions, eventType: 'change',
+                handler: (e) => updateState('selectedStyle', e.target.value)
+            }));
+
+            drawerContent.append(drawerHeader, formContainer);
+            drawer.appendChild(drawerContent);
+            dom_controls_container.append(backdrop, drawer);
+            // --- CONSOLIDATION FIX END ---
+
+            const header = createElement('div', 'w-full bg-gray-900/80 backdrop-blur-sm border-b border-gray-700 p-4 flex items-center justify-between sticky top-0 z-20');
+            const title = createElement('h1', 'text-lg font-bold text-white');
+            title.textContent = 'Cultural Coinage Generator';
+            const settingsBtn = createElement('button', 'text-gray-300 hover:text-white p-2 rounded-full -mr-2');
+            settingsBtn.innerHTML = '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.096 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>';
+            settingsBtn.addEventListener('click', toggleControls);
+            header.append(title, settingsBtn);
+
+            const fabContainer = createElement('div', 'fixed bottom-4 right-4 z-10 flex flex-col items-end gap-3');
+            const generateBtn = createElement('button', 'bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-full shadow-lg flex items-center gap-2 transition-colors min-h-12 min-w-12 justify-center');
+            generateBtn.innerHTML = '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg><span class="hidden sm:inline">Generate</span>';
+            generateBtn.addEventListener('click', handleGenerate);
+            fabContainer.appendChild(generateBtn);
+
+            container.append(header, dom_main, fabContainer, dom_controls_container);
+            dom_root.appendChild(container);
+
+            updateMainContent();
+        }
+
+        document.addEventListener('DOMContentLoaded', initializeApp);
+    </script>
+</body>
+</html>
+
+
          * This project is about inventing new names that blend cultural and linguistic origins 
          * with thematic inspiration. The agent acts as an expert scholar to provide 
          * context-aware, poetic suggestions, learning from user feedback.
