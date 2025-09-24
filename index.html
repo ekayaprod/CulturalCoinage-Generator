@@ -56,7 +56,7 @@
     <div id="root" class="bg-gray-900 w-full min-h-screen flex flex-col"></div>
     <script>
         /**
-         * Cultural Coinage Generator - Optimized
+         * Cultural Coinage Generator - Optimized Vanilla JS Version
          */
 
         //--- CONFIGURATION & DATA ---
@@ -117,7 +117,6 @@
 
         //--- SYSTEM PROMPT GENERATION ---
         function createSystemPrompt(taskPrompt) {
-            // Unchanged from previous versions
             return `
 **PERSONA:**
 You are an AI agent with the persona of an Etymological Scholar and Creative Linguist. Your knowledge of the languages selected by the user is deep, nuanced, and authentic. You do not invent meanings; you synthesize them from real linguistic roots.
@@ -250,7 +249,6 @@ ${taskPrompt}
             const grid = document.createElement('div');
             grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
             
-            // PERFORMANCE: Use a DocumentFragment to batch DOM appends
             const fragment = document.createDocumentFragment();
             appState.results.forEach(item => {
                 const isLiked = appState.likedNames.some(n => n.name === item.name);
@@ -274,7 +272,7 @@ ${taskPrompt}
                 card.querySelector('[data-action="like"]').dataset.item = JSON.stringify(item);
                 fragment.appendChild(card);
             });
-            grid.appendChild(fragment); // Single append operation
+            grid.appendChild(fragment);
             container.appendChild(grid);
             return container;
         }
@@ -331,297 +329,161 @@ ${taskPrompt}
                         <label for="styleSelect" class="block text-sm font-medium text-gray-300 mb-1">Style</label>
                         <select id="styleSelect" name="selectedStyle" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white">${styleOptions.map(opt => `<option value="${opt}" ${appState.selectedStyle === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select>
                     </div>
-                    <button data-action="openPhilosophy" class="text-sm text-gray-400 hover:tex        };
-
-        // --- CACHED DOM ELEMENTS ---
-        let dom_root, dom_main, dom_controls_container, dom_generate_btn;
-
-        // --- UTILITY ---
-        function createElement(tag, classes = '', attributes = {}) {
-            const el = document.createElement(tag);
-            if (classes) el.className = classes;
-            Object.entries(attributes).forEach(([key, value]) => el.setAttribute(key, value));
-            return el;
-        }
-
-        function createIcon(paths, classes = 'w-6 h-6') {
-            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-            svg.setAttribute('class', classes);
-            svg.setAttribute('fill', 'none');
-            svg.setAttribute('stroke', 'currentColor');
-            svg.setAttribute('viewBox', '0 0 24 24');
-            paths.forEach(pathData => {
-                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                path.setAttribute('stroke-linecap', 'round');
-                path.setAttribute('stroke-linejoin', 'round');
-                path.setAttribute('stroke-width', '2');
-                path.setAttribute('d', pathData);
-                svg.appendChild(path);
-            });
-            return svg;
-        }
-
-        function clearElement(element) { if(element) element.innerHTML = ''; }
-        function debounce(func, delay) {
-            let timeout;
-            return function(...args) {
-                clearTimeout(timeout);
-                timeout = setTimeout(() => func.apply(this, args), delay);
-            };
-        }
-        function updateState(key, value) { 
-            appState[key] = value;
-            saveStateToLocalStorage();
-        }
-
-        // --- LOCAL STORAGE ---
-        function saveStateToLocalStorage() {
-            const stateToSave = {
-                apiKey: appState.apiKey,
-                likedNames: appState.likedNames,
-                selectedLanguages: appState.selectedLanguages,
-                selectedThemes: appState.selectedThemes,
-                selectedStyle: appState.selectedStyle,
-                surname: appState.surname,
-                siblingNames: appState.siblingNames,
-                firstNameForMiddle: appState.firstNameForMiddle
-            };
-            localStorage.setItem('culturalCoinageState', JSON.stringify(stateToSave));
-        }
-
-        function loadStateFromLocalStorage() {
-            try {
-                const savedState = localStorage.getItem('culturalCoinageState');
-                if (savedState) {
-                    const parsedState = JSON.parse(savedState);
-                    appState = { ...appState, ...parsedState };
-                }
-            } catch (e) {
-                console.error("Failed to load state from Local Storage:", e);
-            }
-        }
-
-        // --- SYSTEM PROMPT GENERATION ---
-        function createSystemPrompt(taskPrompt) {
-            return `
-            **PERSONA:**
-            You are an AI agent with the persona of an Etymological Scholar and Creative Linguist. Your knowledge of the languages selected by the user is deep, nuanced, and authentic. You do not invent meanings; you synthesize them from real linguistic roots.
-
-            **CORE DIRECTIVE:**
-            Your goal is to generate a list of 10 unique, unisex names that feel like newly written mythic artifacts—poetic, pronounceable, and culturally respectful.
-
-            **METHODOLOGY:**
-            You must follow this creative process:
-            1.  **Linguistic Deconstruction:** Analyze the phonetic components (morphemes, phonemes, common sounds) of the source languages provided in the task.
-            2.  **Thematic Synthesis:** Map the requested abstract themes to phonetic qualities. For example, 'Strength' might map to hard consonants (k, t, r), while 'Water' might map to liquid sounds (l, s, sh).
-            3.  **Creative Recombination:** Thoughtfully combine the deconstructed linguistic elements with the synthesized thematic sounds to coin new, meaningful names. Your "roots" explanation must reflect this thoughtful process.
-            4.  **Contextual Analysis:** If a surname or sibling names are provided, you MUST analyze them for style and phonetic flow. Your suggestions must harmonize with this context, and you should briefly mention this in the "roots" description (e.g., "...chosen for its soft ending to complement the hard consonant in the surname Jones.").
-            
-            **USER TASK:**
-            ${taskPrompt}
-
-            **OUTPUT CONSTRAINTS:**
-            - **Strict JSON Format:** Your entire response must be ONLY a valid JSON array of objects.
-            - **Object Structure:** Each object must contain "name", "roots", and "meaning".
-            - **Quality Filters:** All names must be 4-10 letters, have 2-3 syllables, and be filtered to avoid blacklist words or awkward English associations.
+                    <button data-action="openPhilosophy" class="text-sm text-gray-400 hover:text-white text-center w-full pt-4">Show Philosophy</button>
+                </div>
             `;
+            drawerContainer.appendChild(drawer);
+            updateLikedNames(drawer);
+            return drawerContainer;
         }
-
-        // --- GEMINI API CALL ---
-        async function callGeminiAPI(prompt) {
-             if (!appState.apiKey) { throw new Error("Enter Gemini API Key"); }
-            try {
-                const response = await fetch(`${API_BASE_URL}?key=${appState.apiKey}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-                });
-                if (!response.ok) throw new Error(`API Error: ${response.status}`);
-                const data = await response.json();
-                return data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            } catch (e) {
-                console.error("Gemini API call failed:", e);
-                throw e;
-            }
-        }
-
-        // --- RESPONSE PROCESSING ---
-        function getSyllableCount(word) {
-            word = word.toLowerCase();
-            if (word.length <= 3) return 1;
-            word = word.replace(/(?:[^laeiouy]es|ed|[^laeiouy]e)$/, '');
-            word = word.replace(/^y/, '');
-            const match = word.match(/[aeiouy]{1,2}/g);
-            return match ? match.length : 1;
-        }
-
-        function parseAndScoreNames(responseText) {
-            let names = [];
-            try { names = JSON.parse(responseText); } 
-            catch { console.warn("Failed JSON parse, fallback regex."); 
-                const matches = responseText.match(/"name":\s*"([A-Z][a-z]{3,8})"/g) || [];
-                names = matches.map(m => ({ name: m.split('"')[3], roots: 'N/A', meaning: 'Could not parse.' }));
-            }
-
-            if (!Array.isArray(names)) return [];
-
-            const filtered = names.filter(n => n.name && !blacklist.some(b => n.name.toLowerCase().includes(b)));
-
-            filtered.forEach(n => {
-                n.score = 0;
-                if (n.name.length >= 4 && n.name.length <= 10) n.score++;
-                const syllables = getSyllableCount(n.name);
-                if (syllables >=2 && syllables <=3) n.score++;
-                if (/^[a-zA-Z]+$/.test(n.name)) n.score++;
-                if (n.meaning && n.meaning.length > 5) n.score++;
-                if (n.roots && n.roots.length > 5) n.score++;
-            });
-
-            return filtered.sort((a,b) => b.score - a.score);
-        }
-
-        // --- DYNAMIC UI UPDATES ---
-        function updateMainContent() {
-            clearElement(dom_main);
-
-            if (appState.isLoading) {
-                const loadingDiv = createElement('div','m-auto text-center');
-                loadingDiv.textContent='Generating...';
-                dom_main.appendChild(loadingDiv);
-                return;
-            }
-            if (appState.error) {
-                const errDiv = createElement('div','m-auto text-center text-red-400 bg-red-900/50 p-4 rounded-md');
-                errDiv.textContent = appState.error;
-                dom_main.appendChild(errDiv);
-                return;
-            }
-            if (appState.results.length === 0) {
-                const placeholder = createElement('div','m-auto text-center text-gray-500');
-                placeholder.textContent='Your culturally coined names will appear here.';
-                dom_main.appendChild(placeholder);
-                return;
-            }
+        
+        function updateLikedNames(container) {
+            const likedContainer = container.querySelector('#liked-names-container');
+            if(!likedContainer) return;
+            likedContainer.innerHTML = '';
+            if (appState.likedNames.length === 0) return;
             
-            const resultsHeader = createElement('div', 'flex justify-between items-center mb-4');
-            const resultsTitle = createElement('h2', 'text-xl font-bold text-white');
-            resultsTitle.textContent = 'Generated Names';
-            const exportButton = createElement('button', 'text-sm bg-gray-700 text-gray-300 hover:bg-gray-600 px-3 py-1.5 rounded-md font-medium');
-            exportButton.textContent = 'Export as CSV';
-            exportButton.addEventListener('click', exportCSV);
-            resultsHeader.append(resultsTitle, exportButton);
-            dom_main.appendChild(resultsHeader);
+            const label = document.createElement('label');
+            label.className = 'block text-sm font-medium text-gray-300 mb-2';
+            label.textContent = 'Liked Names (Inspiration)';
+            
+            const itemsContainer = document.createElement('div');
+            itemsContainer.className = 'space-y-2';
 
-            const grid = createElement('div','grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4');
-            appState.results.forEach(item => {
-                const card = createElement('div','bg-gray-800 border border-gray-700 rounded-lg p-4 flex flex-col', { 'data-name': item.name });
-                const header = createElement('div','flex justify-between items-start');
-                const nameEl = createElement('h3','text-2xl font-bold text-white'); nameEl.textContent = item.name;
-                
-                const btnGroup = createElement('div', 'flex items-center gap-2');
-                const copyBtn = createElement('button','text-gray-400 hover:text-white text-xl'); copyBtn.innerHTML='📋';
-                copyBtn.title='Copy name'; copyBtn.addEventListener('click',()=>navigator.clipboard.writeText(item.name));
-                
-                const isLiked = appState.likedNames.some(n => n.name === item.name);
-                const likeBtn = createElement('button', `like-btn text-gray-400 hover:text-white ${isLiked ? 'text-red-500' : ''}`); 
-                likeBtn.title = isLiked ? 'Unlike' : 'Like';
-                likeBtn.innerHTML = `<svg class="w-6 h-6" fill="${isLiked ? 'currentColor' : 'none'}" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 016.364 0L12 7.5l1.318-1.182a4.5 4.5 0 116.364 6.364L12 21l-7.682-7.318a4.5 4.5 0 010-6.364z"></path></svg>`;
-                likeBtn.addEventListener('click', () => handleLike(item));
-
-                btnGroup.append(copyBtn, likeBtn);
-                header.append(nameEl, btnGroup);
-
-                const meaning = createElement('p','text-gray-300 italic my-2'); meaning.textContent = `"${item.meaning || '...'}"`;
-                const roots = createElement('p','text-xs text-gray-500 mt-auto'); roots.innerHTML=`<span class="font-semibold">Roots:</span> ${item.roots || '...'}`;
-                card.append(header, meaning, roots);
-                grid.appendChild(card);
+            const fragment = document.createDocumentFragment();
+            appState.likedNames.forEach(nameObj => {
+                const item = document.createElement('div');
+                item.className = 'flex justify-between items-center bg-gray-700 px-2 py-1 rounded';
+                item.innerHTML = `<span class="text-sm text-white">${nameObj.name}</span>`;
+                const button = document.createElement('button');
+                button.className = 'text-gray-400 hover:text-white';
+                button.innerHTML = '×';
+                button.dataset.action = 'like';
+                button.dataset.item = JSON.stringify(nameObj);
+                item.appendChild(button);
+                fragment.appendChild(item);
             });
-            dom_main.appendChild(grid);
+            itemsContainer.appendChild(fragment);
+            likedContainer.append(label, itemsContainer);
         }
 
-        function updateGenerateButtonText() {
-            if (!dom_generate_btn) return;
-            const span = dom_generate_btn.querySelector('span');
-            if (span) {
-                span.textContent = appState.likedNames.length > 0 ? 'Riff on Liked' : 'First Names';
+        function createPhilosophyModal() {
+            const modal = document.createElement('div');
+            modal.className = "fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 animate-fade-in";
+            modal.dataset.action = "closePhilosophy";
+            modal.innerHTML = `
+                <div class="bg-gray-800 rounded-lg p-6 max-w-md w-full shadow-2xl">
+                    <h2 class="text-xl font-bold mb-4 text-white">Philosophy</h2>
+                    <p class="text-gray-300 mb-6">This tool invents new names by blending cultural origins with thematic inspiration. The agent acts as an expert scholar to provide context-aware, poetic suggestions, learning from user feedback.</p>
+                    <button data-action="closePhilosophy" class="bg-blue-600 hover:bg-blue-700 transition-colors px-4 py-2 rounded-md w-full text-white font-semibold">Close</button>
+                </div>
+            `;
+            return modal;
+        }
+
+
+        // --- EVENT HANDLERS & APP LOGIC ---
+        function handleAction(e) {
+            const target = e.target.closest('[data-action]');
+            if (!target) return;
+
+            const action = target.dataset.action;
+
+            switch(action) {
+                case 'toggleControls':
+                    appState.isControlsOpen = !appState.isControlsOpen;
+                    render();
+                    break;
+                case 'openPhilosophy':
+                    appState.showPhilosophy = true;
+                    render();
+                    break;
+                case 'closePhilosophy':
+                    if (e.target.dataset.action === 'closePhilosophy') {
+                        appState.showPhilosophy = false;
+                        render();
+                    }
+                    break;
+                case 'like':
+                    handleLike(JSON.parse(target.dataset.item));
+                    break;
+                case 'generateFirstNames':
+                    handleGenerateFirstNames();
+                    break;
+                case 'suggestMiddleNames':
+                    handleSuggestMiddleNames();
+                    break;
+                case 'exportCSV':
+                    exportCSV();
+                    break;
+                case 'copyPrompt':
+                    navigator.clipboard.writeText(appState.generatedPrompt);
+                    break;
+                case 'copyName':
+                    navigator.clipboard.writeText(target.dataset.name);
+                    break;
             }
         }
         
-        function renderLikedNames() {
-            const container = document.getElementById('liked-names-container');
-            if (!container) return;
-            clearElement(container);
+        function handleFormInput(e) {
+            const { name, value } = e.target;
+            if(!name) return;
 
-            if (appState.likedNames.length > 0) {
-                const likedLabel = createElement('label', 'block text-sm font-medium text-gray-300 mb-2');
-                likedLabel.textContent = 'Liked Names (Inspiration)';
-                const likedList = createElement('div', 'space-y-2');
-                appState.likedNames.forEach(nameObj => {
-                    const likedItem = createElement('div', 'flex justify-between items-center bg-gray-700 px-2 py-1 rounded');
-                    const likedName = createElement('span', 'text-sm text-white');
-                    likedName.textContent = nameObj.name;
-                    const removeBtn = createElement('button', 'text-gray-400 hover:text-white');
-                    removeBtn.innerHTML = '&times;';
-                    removeBtn.addEventListener('click', () => handleLike(nameObj));
-                    likedItem.append(likedName, removeBtn);
-                    likedList.appendChild(likedItem);
-                });
-                container.append(likedLabel, likedList);
-            }
-        }
-
-        function createFormControl(config) {
-            const container = createElement('div');
-            const label = createElement('label', 'block text-sm font-medium text-gray-300 mb-1', { for: config.id });
-            label.textContent = config.label;
-            
-            let control;
-            if (config.type === 'select') {
-                control = createElement('select', 'w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white', { id: config.id, multiple: !!config.multiple });
-                if (config.multiple) control.classList.add('h-24');
-                config.options.forEach(optValue => {
-                    const option = createElement('option');
-                    option.value = optValue;
-                    option.textContent = optValue;
-                    if (config.multiple ? config.value.includes(optValue) : config.value === optValue) option.selected = true;
-                    control.appendChild(option);
-                });
+            if (name === 'selectedLanguages') {
+                appState[name] = value.split(',').map(s => s.trim()).filter(Boolean);
+            } else if (name === 'selectedThemes') {
+                 appState[name] = Array.from(e.target.selectedOptions).map(option => option.value);
             } else {
-                control = createElement('input', 'w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white', { id: config.id, type: config.type, placeholder: config.placeholder || '' });
-                control.value = Array.isArray(config.value) ? config.value.join(', ') : config.value;
+                appState[name] = value;
             }
-
-            control.addEventListener(config.eventType || 'input', config.handler);
-            container.append(label, control);
-            return container;
+        }
+        
+        function handleFormChange(e) {
+            if(e.target.name) saveState();
         }
 
-        // --- CORE GENERATION & EVENT HANDLERS ---
-        async function executeGeneration(taskPrompt) {
+        function handleLike(nameObject) {
+            const isLiked = appState.likedNames.some(n => n.name === nameObject.name);
+            appState.likedNames = isLiked ?
+                appState.likedNames.filter(n => n.name !== nameObject.name) :
+                [...appState.likedNames, nameObject];
+            saveState();
+            
+            const mainContent = document.getElementById('main-content');
+            const controlsContainer = document.getElementById('controls-container');
+            updateMainContent(mainContent);
+            if (controlsContainer) updateLikedNames(controlsContainer);
+        }
+
+
+        async function executeGeneration(task) {
             appState.isLoading = true;
             appState.error = null;
             appState.results = [];
+            appState.generatedPrompt = null;
             updateMainContent();
 
+            const prompt = createSystemPrompt(task);
+            if (!appState.apiKey) {
+                appState.generatedPrompt = prompt;
+                appState.isLoading = false;
+                updateMainContent();
+                return;
+            }
             try {
-                const prompt = createSystemPrompt(taskPrompt);
                 let responseText = await callGeminiAPI(prompt);
                 let results = parseAndScoreNames(responseText);
 
                 if (results.length < 5) {
                     console.log("Retrying with fallback prompt...");
                     const fallbackTask = "Generate 10 unisex poetic names in Latin and Greek, Cosmic theme.";
-                    const fallbackPrompt = createSystemPrompt(fallbackTask);
-                    responseText = await callGeminiAPI(fallbackPrompt);
+                    responseText = await callGeminiAPI(createSystemPrompt(fallbackTask));
                     results = parseAndScoreNames(responseText);
                 }
-                
-                if (!results.length) {
-                    appState.error = "No names generated. Please adjust your selections or try again.";
-                }
                 appState.results = results;
-
-            } catch(e) {
+                if (!results.length) appState.error = "No names generated. Please adjust selections.";
+                
+            } catch (e) {
                 appState.error = e.message;
             } finally {
                 appState.isLoading = false;
@@ -629,383 +491,55 @@ ${taskPrompt}
             }
         }
 
-        function handleLike(nameObject) {
-            const isLiked = appState.likedNames.some(n => n.name === nameObject.name);
-            const updatedLikedNames = isLiked
-                ? appState.likedNames.filter(n => n.name !== nameObject.name)
-                : [...appState.likedNames, nameObject];
-            
-            updateState('likedNames', updatedLikedNames);
-
-            const cardInGrid = dom_main.querySelector(`[data-name="${nameObject.name}"] .like-btn`);
-            if (cardInGrid) {
-                cardInGrid.classList.toggle('text-red-500', !isLiked);
-                const svg = cardInGrid.querySelector('svg');
-                if (svg) svg.setAttribute('fill', !isLiked ? 'currentColor' : 'none');
-            }
-            renderLikedNames();
-            updateGenerateButtonText();
-        }
-        
         function handleGenerateFirstNames() {
             let task;
             if (appState.likedNames.length > 0) {
                 const likedNamesStr = appState.likedNames.map(n => n.name).join(', ');
-                task = `The user has provided these liked names as inspiration: "${likedNamesStr}". Your primary task is to analyze their phonetic and stylistic qualities. Then, generate 10 new names that are similar in feel and aesthetic, using the themes "${appState.selectedThemes.join(', ')}" and adopting a "${appState.selectedStyle}" writing style for your descriptions.`;
+                task = `Analyze these liked names: "${likedNamesStr}". Generate 10 new names in a similar style, using themes of "${appState.selectedThemes.join(', ')}" and a "${appState.selectedStyle}" writing style.`;
             } else {
-                task = `Generate names by fusing these linguistic roots: ${appState.selectedLanguages.join(', ')}. The names should be inspired by the themes of ${appState.selectedThemes.join(', ')}. Your descriptions should be written in a "${appState.selectedStyle}" style.`;
+                task = `Generate names from these languages: ${appState.selectedLanguages.join(', ')}, with themes of ${appState.selectedThemes.join(', ')}, in a "${appState.selectedStyle}" style.`;
             }
-
-            if (appState.surname) {
-                task += ` All suggestions must harmonize with the surname "${appState.surname}".`;
-            }
-            if (appState.siblingNames) {
-                task += ` All suggestions must be stylistically compatible with the sibling name(s) "${appState.siblingNames}".`;
-            }
-
+            if (appState.surname) task += ` All suggestions must harmonize with the surname "${appState.surname}".`;
+            if (appState.siblingNames) task += ` All suggestions must be stylistically compatible with the sibling(s) "${appState.siblingNames}".`;
             executeGeneration(task);
         }
-        
+
         function handleSuggestMiddleNames() {
             if (!appState.firstNameForMiddle) {
-                appState.error = "Please enter a first            generatedPrompt: null,
-            selectedLanguages: ["Celtic", "Sanskrit"],
-            selectedThemes: ["Light", "Balance"],
-            selectedStyle: "Lyrical & Melodic"
-        };
-
-        // --- CACHED DOM ELEMENTS ---
-        let dom_root, dom_main, dom_controls_container;
-
-        // --- UTILITY & DOM FUNCTIONS ---
-        function createSystemPrompt(taskPrompt) {
-            return `You are an expert in cultural linguistics. ${taskPrompt}`;
-        }
-
-        function createElement(tag, classes = '', attributes = {}) {
-            const el = document.createElement(tag);
-            if (classes) el.className = classes;
-            Object.entries(attributes).forEach(([key, value]) => el.setAttribute(key, value));
-            return el;
-        }
-
-        function clearElement(element) {
-            if(element) element.innerHTML = '';
-        }
-        
-        function debounce(func, delay) {
-            let timeout;
-            return function(...args) {
-                clearTimeout(timeout);
-                timeout = setTimeout(() => func.apply(this, args), delay);
-            };
-        }
-
-        /**
-         * CONSOLIDATION FIX: This new helper function creates a labeled form control,
-         * eliminating repetitive code from the initializeApp function.
-         */
-        function createFormControl(config) {
-            const container = createElement('div');
-            const label = createElement('label', 'block text-sm font-medium text-gray-300 mb-2');
-            label.textContent = config.label;
-            label.setAttribute('for', config.id);
-            
-            let control;
-            if (config.type === 'select') {
-                control = createElement('select', 'w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white', { id: config.id });
-                if (config.multiple) {
-                    control.setAttribute('multiple', true);
-                    control.classList.add('h-24');
-                }
-                config.options.forEach(optValue => {
-                    const option = createElement('option');
-                    option.value = optValue;
-                    option.textContent = optValue;
-                    if (config.multiple ? config.value.includes(optValue) : config.value === optValue) {
-                        option.selected = true;
-                    }
-                    control.appendChild(option);
-                });
-            } else {
-                control = createElement('input', 'w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white', {
-                    id: config.id,
-                    type: config.type,
-                    placeholder: config.placeholder || ''
-                });
-                control.value = Array.isArray(config.value) ? config.value.join(', ') : config.value;
+                appState.error = "Please enter a first name to suggest middle names.";
+                updateMainContent();
+                return;
             }
-
-            control.addEventListener(config.eventType || 'input', config.handler);
-            container.append(label, control);
-            return container;
+            let task = `Generate 10 middle names for the first name "${appState.firstNameForMiddle}". Use themes of ${appState.selectedThemes.join(', ')} and a "${appState.selectedStyle}" style.`;
+            if (appState.surname) task += ` The full name, including the surname "${appState.surname}", should be phonetically pleasing.`;
+            executeGeneration(task);
         }
 
-        // --- DYNAMIC UI UPDATERS ---
-        function updateMainContent() {
-            clearElement(dom_main);
-            // ... (rest of updateMainContent logic remains the same)
+        function exportCSV() {
+            if (!appState.results.length) return;
+            let csvContent = "data:text/csv;charset=utf-8,Name,Meaning,Roots,Score\n";
+            appState.results.forEach(item => {
+                const sanitizedMeaning = `"${(item.meaning || '').replace(/"/g, '""')}"`;
+                const sanitizedRoots = `"${(item.roots || '').replace(/"/g, '""')}"`;
+                const row = [item.name, sanitizedMeaning, sanitizedRoots, item.score].join(',');
+                csvContent += row + "\r\n";
+            });
+            const link = document.createElement("a");
+            link.href = encodeURI(csvContent);
+            link.download = "cultural-coinage-names.csv";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
-
-        // --- STATE & EVENT HANDLERS ---
-        function updateState(key, value) {
-            appState[key] = value;
-        }
-
-        function toggleControls() {
-            dom_controls_container.classList.toggle('hidden');
-        }
-
-        function handleGenerate() {
-            const task = `Generate culturally inspired names based on languages: ${appState.selectedLanguages.join(', ')}, themes: ${appState.selectedThemes.join(', ')}, and style: ${appState.selectedStyle}.`;
-            appState.generatedPrompt = createSystemPrompt(task);
-            appState.isLoading = false; 
-            appState.error = null;
-            updateMainContent();
-        }
-
-        // --- APP INITIALIZATION ---
-        function initializeApp() {
-            dom_root = document.getElementById('root');
-            clearElement(dom_root);
-            
-            const container = createElement('div', 'bg-gray-900 w-full min-h-screen flex flex-col');
-            // ... (Header and FAB creation remains the same) ...
-
-            dom_main = createElement('main', 'flex-grow p-3 md:p-6 overflow-y-auto', { id: 'main-content' });
-            
-            // --- CONSOLIDATION FIX START ---
-            // Drawer creation is now cleaner, using the new helper function.
-            dom_controls_container = createElement('div', 'hidden', { id: 'controls-drawer-container' });
-            const backdrop = createElement('div', 'fixed inset-0 bg-black/60 z-40');
-            backdrop.addEventListener('click', toggleControls);
-            const drawer = createElement('div', 'fixed top-0 left-0 h-full w-full max-w-xs sm:max-w-sm bg-gray-900 border-r border-gray-700 z-50 transform transition-transform');
-            const drawerContent = createElement('div', 'flex flex-col h-full p-4 overflow-y-auto');
-            
-            const drawerHeader = createElement('div', 'flex items-center justify-between mb-6');
-            const drawerTitle = createElement('h2', 'text-xl font-bold text-white');
-            drawerTitle.textContent = 'Controls';
-            const closeBtn = createElement('button', 'text-gray-400 hover:text-white text-2xl');
-            closeBtn.innerHTML = '&times;';
-            closeBtn.addEventListener('click', toggleControls);
-            drawerHeader.append(drawerTitle, closeBtn);
-
-            const formContainer = createElement('div', 'space-y-4');
-
-            // API Key Control
-            formContainer.appendChild(createFormControl({
-                label: 'API Key', id: 'apiKeyInput', type: 'password',
-                value: appState.apiKey, placeholder: 'Enter Gemini API key',
-                handler: debounce((e) => updateState('apiKey', e.target.value), 300)
-            }));
-
-            // Languages Control
-            formContainer.appendChild(createFormControl({
-                label: 'Languages', id: 'languageInput', type: 'text',
-                value: appState.selectedLanguages, placeholder: 'Celtic, Sanskrit',
-                handler: debounce((e) => updateState('selectedLanguages', e.target.value.split(',').map(s => s.trim()).filter(Boolean)), 300)
-            }));
-
-            // Themes Control
-            formContainer.appendChild(createFormControl({
-                label: 'Themes', id: 'themeSelect', type: 'select',
-                value: appState.selectedThemes, options: themeOptions, multiple: true, eventType: 'change',
-                handler: (e) => updateState('selectedThemes', Array.from(e.target.selectedOptions).map(opt => opt.value))
-            }));
-            
-            // Style Control
-            formContainer.appendChild(createFormControl({
-                label: 'Style', id: 'styleSelect', type: 'select',
-                value: appState.selectedStyle, options: styleOptions, eventType: 'change',
-                handler: (e) => updateState('selectedStyle', e.target.value)
-            }));
-
-            drawerContent.append(drawerHeader, formContainer);
-            drawer.appendChild(drawerContent);
-            dom_controls_container.append(backdrop, drawer);
-            // --- CONSOLIDATION FIX END ---
-
-            const header = createElement('div', 'w-full bg-gray-900/80 backdrop-blur-sm border-b border-gray-700 p-4 flex items-center justify-between sticky top-0 z-20');
-            const title = createElement('h1', 'text-lg font-bold text-white');
-            title.textContent = 'Cultural Coinage Generator';
-            const settingsBtn = createElement('button', 'text-gray-300 hover:text-white p-2 rounded-full -mr-2');
-            settingsBtn.innerHTML = '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.096 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>';
-            settingsBtn.addEventListener('click', toggleControls);
-            header.append(title, settingsBtn);
-
-            const fabContainer = createElement('div', 'fixed bottom-4 right-4 z-10 flex flex-col items-end gap-3');
-            const generateBtn = createElement('button', 'bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-full shadow-lg flex items-center gap-2 transition-colors min-h-12 min-w-12 justify-center');
-            generateBtn.innerHTML = '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg><span class="hidden sm:inline">Generate</span>';
-            generateBtn.addEventListener('click', handleGenerate);
-            fabContainer.appendChild(generateBtn);
-
-            container.append(header, dom_main, fabContainer, dom_controls_container);
-            dom_root.appendChild(container);
-
-            updateMainContent();
-        }
-
-        document.addEventListener('DOMContentLoaded', initializeApp);
-    </script>
-</body>
-</html>
-
-
-         * This project is about inventing new names that blend cultural and linguistic origins 
-         * with thematic inspiration. The agent acts as an expert scholar to provide 
-         * context-aware, poetic suggestions, learning from user feedback.
-         */
-        const { useState, useEffect, useRef } = React;
         
-        // --- 1. CONFIGURATION & DATA ---
-        const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-preview-05-20:generateContent";
-        const themeOptions = ["Nature", "Cosmic", "Balance", "Strength", "Water", "Light", "Shadow", "Music"];
-        const styleOptions = ["Lyrical & Melodic", "Archaic & Mythic", "Minimalist & Modern", "Heroic & Resonant"];
-        const blacklist = ["tuna", "ilay", "baran", "nur", "solren", "kuzel", "anal"];
-
-        // --- 2. CORE LOGIC & PROMPTING ---
-        const createSystemPrompt = (taskPrompt) => { /* ... createSystemPrompt logic ... */ return `...`; };
-        const getSyllableCount = (word) => { /* ... syllable counting logic ... */ return 1; };
-        const parseAndProcessResponse = (responseText) => { /* ... parsing and scoring logic ... */ return []; };
-
-        // --- 3. UI COMPONENTS ---
-        const PhilosophyModal = ({ onClose }) => ( /* ... Modal Component ... */ );
-        const NameCard = ({ item, onLike, isLiked }) => ( /* ... Name Card Component ... */ );
-
-        const PromptDisplayCard = ({ prompt }) => {
-            const [copied, setCopied] = useState(false);
-            const handleCopy = () => {
-                navigator.clipboard.writeText(prompt);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-            };
-            return (
-                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 h-full flex flex-col">
-                    <div className="flex justify-between items-center mb-2">
-                        <h3 className="text-lg font-bold text-white">Generated Prompt</h3>
-                        <button onClick={handleCopy} className="text-sm bg-blue-600 text-white font-semibold px-3 py-1 rounded-md hover:bg-blue-700">
-                            {copied ? 'Copied!' : 'Copy Prompt'}
-                        </button>
-                    </div>
-                    <p className="text-xs text-gray-400 mb-4">No API key found. Copy this prompt and paste it into your preferred LLM.</p>
-                    <pre className="text-sm text-gray-300 bg-gray-900 rounded-md p-4 overflow-auto whitespace-pre-wrap flex-grow">
-                        {prompt}
-                    </pre>
-                </div>
-            );
-        };
-        
-        // --- 4. MAIN APPLICATION ---
-        function App() {
-            // State initialization from Local Storage
-            const getInitialState = (key, defaultValue) => { /* ... getInitialState logic ... */ return defaultValue; };
-            
-            const [apiKey, setApiKey] = useState(() => getInitialState('apiKey', ''));
-            const [results, setResults] = useState([]);
-            const [isLoading, setIsLoading] = useState(false);
-            const [error, setError] = useState(null);
-            const [showPhilosophy, setShowPhilosophy] = useState(false);
-            const [likedNames, setLikedNames] = useState(() => getInitialState('likedNames', []));
-            const [generatedPrompt, setGeneratedPrompt] = useState(null); // New state for no-API-key mode
-
-            // ... other state variables and useEffect for saving state ...
-
-            const handleLike = (nameObject) => { /* ... handleLike logic ... */ };
-            const handleAddLanguage = () => { /* ... language add logic ... */ };
-            const handleRemoveLanguage = (langToRemove) => { /* ... language remove logic ... */ };
-
-            const executePrompt = async (prompt) => {
-                setIsLoading(true);
-                setError(null);
-                setResults([]);
-                setGeneratedPrompt(null);
-
-                // --- DUAL MODE LOGIC ---
-                if (!apiKey) {
-                    setGeneratedPrompt(prompt);
-                    setIsLoading(false);
-                    return;
-                }
-
-                // API Mode (existing logic)
-                try {
-                    // ... API call and retry logic ...
-                } catch (err) {
-                    // ... error handling ...
-                } finally {
-                    setIsLoading(false);
-                }
-            };
-
-            const handleGenerateFirstNames = () => {
-                let task;
-                // ... logic to build the first name prompt task ...
-                executePrompt(createSystemPrompt(task));
-            };
-
-            const handleSuggestMiddleNames = () => {
-                // ... logic to build the middle name prompt task ...
-                executePrompt(createSystemPrompt(task));
-            };
-
-            return (
-                <>
-                    {showPhilosophy && <PhilosophyModal onClose={() => setShowPhilosophy(false)} />}
-                    <div className="min-h-screen w-full flex flex-col md:flex-row">
-                        {/* Left Panel: Controls */}
-                        <div className="w-full md:w-1/3 md:max-w-md h-auto md:h-screen flex flex-col p-4 md:p-6 bg-gray-900 border-b md:border-b-0 md:border-r border-gray-700 overflow-y-auto scrolling-panel">
-                            {/* ... Header and other controls ... */}
-                            <div className="mt-6">
-                                <div className="space-y-2">
-                                    <button onClick={handleGenerateFirstNames} disabled={isLoading} className="w-full bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700 disabled:bg-blue-400">
-                                        {isLoading ? 'Consulting...' : (apiKey ? (likedNames.length > 0 ? 'Riff on Liked Names' : 'Generate First Names') : 'Generate Prompt for First Names')}
-                                    </button>
-                                     <button onClick={handleSuggestMiddleNames} disabled={isLoading} className="w-full bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-gray-700 disabled:bg-gray-400 text-sm">
-                                        {isLoading ? 'Consulting...' : (apiKey ? 'Suggest Middle Names' : 'Generate Prompt for Middle Names')}
-                                    </button>
-                                </div>
-                                <button onClick={() => setShowPhilosophy(true)} className="text-sm text-gray-400 hover:text-white text-center w-full mt-4">Show Philosophy</button>
-                            </div>
-                        </div>
-
-                        {/* Right Panel: Conditional Results Display */}
-                        <div className="w-full md:w-2/3 flex-grow p-4 md:p-6 scrolling-panel overflow-y-auto">
-                            {isLoading && <div className="flex h-full items-center justify-center text-center">Consulting the agent...</div>}
-                            {error && <div className="flex h-full items-center justify-center text-center text-red-400 bg-red-900/50 p-4 rounded-md">{error}</div>}
-                            
-                            {!isLoading && !error && (
-                                <>
-                                    {generatedPrompt && <PromptDisplayCard prompt={generatedPrompt} />}
-                                    
-                                    {results.length > 0 && (
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                                            {results.map(item => (
-                                                <NameCard 
-                                                    key={item.name} 
-                                                    item={item} 
-                                                    onLike={handleLike} 
-                                                    isLiked={likedNames.some(n => n.name === item.name)} 
-                                                />
-                                            ))}
-                                        </div>
-                                    )}
-
-                                    {!generatedPrompt && results.length === 0 && (
-                                        <div className="flex h-full items-center justify-center text-center text-gray-500">
-                                            <p>Your culturally coined names will appear here.</p>
-                                        </div>
-                                    )}
-                                </>
-                            )}
-                        </div>
-                    </div>
-                </>
-            );
-        }
-
-        const container = document.getElementById('root');
-        const root = ReactDOM.createRoot(container);
-        root.render(<App />);
+        //--- INITIALIZATION ---
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStateFromLocalStorage();
+            root.addEventListener('click', handleAction);
+            root.addEventListener('input', handleFormInput);
+            root.addEventListener('change', handleFormChange);
+            render();
+        });
     </script>
 </body>
 </html>
