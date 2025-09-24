@@ -61,14 +61,18 @@
     <div id="root" class="bg-gray-900 w-full min-h-screen flex flex-col"></div>
     <script>
         /**
-         * Cultural Coinage Generator - Streaming Repaired
+         * Cultural Coinage Generator - Performance Tuned
          */
 
         //--- CONFIGURATION & DATA ---
-        const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent";
+        // 1. Switched to faster Flash-Lite model
+        const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:streamGenerateContent";
         const themeOptions = ["Nature", "Cosmic", "Balance", "Strength", "Water", "Light", "Shadow", "Music"];
         const styleOptions = ["Lyrical & Melodic", "Archaic & Mythic", "Minimalist & Modern", "Heroic & Resonant"];
         const blacklist = ["tuna", "ilay", "baran", "nur", "solren", "kuzel", "anal"];
+        // 4. Added in-memory cache for common requests
+        const responseCache = new Map();
+
 
         // --- APP STATE ---
         let appState = {
@@ -121,33 +125,41 @@
         }
 
         //--- SYSTEM PROMPT GENERATION ---
+        // 3. Optimized prompt length
         function createSystemPrompt(taskPrompt) {
-            return `
-**ROLE:**
-You are an expert etymologist and creative linguist. Synthesize authentic meanings from real linguistic roots.
-**TASK:**
-Generate a list of 10 unique, unisex names based on the user's request.
-- Combine phonetic elements from the source languages with thematic sounds.
-- Names must be poetic, pronounceable, and culturally respectful.
-- If context (surname, siblings) is provided, ensure names harmonize with it.
-- **Roots explanation must be brief (1-2 sentences max).**
-**OUTPUT CONSTRAINTS:**
-- **Strict JSON Array:** Your entire response must be ONLY a valid JSON array of objects (e.g., [{"name": "...", "roots": "...", "meaning": "..."}, ...]).
-- **Object Keys:** Each object must contain "name", "roots", and "meaning".
-- **Filters:** Names must be 4-10 letters, 2-3 syllables, and avoid awkward English words.
-`;
+            return `Generate 6 unisex names as a JSON array. Each object: {"name": "...", "roots": "...", "meaning": "..."}
+    
+${taskPrompt}
+
+Requirements: 4-10 letters, 2-3 syllables, culturally respectful. Return ONLY the JSON array.`;
+        }
+        
+        // 4. Helper for caching
+        function getCacheKey(languages, themes, style) {
+            return `${languages.join(',')}-${themes.join(',')}-${style}`;
         }
 
         // --- GEMINI API CALL & RESPONSE PROCESSING (STREAMING) ---
         async function callGeminiAPIStream(prompt, onNameReceived) {
             if (!appState.apiKey) throw new Error("API Key is missing.");
             
+            // 9. Added connection optimization and tuned generation config
             const response = await fetch(`${API_BASE_URL}?key=${appState.apiKey}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Connection': 'keep-alive'
+                },
                 body: JSON.stringify({ 
                     contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { temperature: 0.9, maxOutputTokens: 2048 }
+                    // 2. Reduced token limits and tuned parameters
+                    generationConfig: { 
+                        temperature: 0.7, 
+                        maxOutputTokens: 1024,
+                        candidateCount: 1,
+                        topK: 20,
+                        topP: 0.8
+                    }
                 })
             });
 
@@ -159,7 +171,7 @@ Generate a list of 10 unique, unisex names based on the user's request.
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let completeResponse = "";
-            let receivedNames = new Set(); // To avoid duplicate processing
+            let receivedNames = new Set(); 
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -204,7 +216,6 @@ Generate a list of 10 unique, unisex names based on the user's request.
                 }
             }
             
-            // Final attempt to parse if streaming ended without a complete set
             if (completeResponse.trim() && receivedNames.size === 0) {
                 try {
                     let cleanResponse = completeResponse.trim();
@@ -227,14 +238,20 @@ Generate a list of 10 unique, unisex names based on the user's request.
         }
         
         async function callGeminiFallback(prompt) {
-            const fallbackUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+            const fallbackUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
             
             const response = await fetch(`${fallbackUrl}?key=${appState.apiKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { temperature: 0.9, maxOutputTokens: 2048 }
+                    generationConfig: { 
+                        temperature: 0.7, 
+                        maxOutputTokens: 1024,
+                        candidateCount: 1,
+                        topK: 20,
+                        topP: 0.8
+                    }
                 })
             });
 
@@ -245,7 +262,6 @@ Generate a list of 10 unique, unisex names based on the user's request.
             const data = await response.json();
             let text = data.candidates[0].content.parts[0].text.trim();
             
-            // Clean markdown formatting
             if (text.startsWith('```json')) {
                 text = text.replace(/```json\s*/, '').replace(/```\s*$/, '');
             }
@@ -313,7 +329,7 @@ Generate a list of 10 unique, unisex names based on the user's request.
         function updateMainContent(mainContainer) {
             mainContainer = mainContainer || document.getElementById('main-content');
             if(!mainContainer) return;
-            mainContainer.innerHTML = ''; // Clear previous content
+            mainContainer.innerHTML = '';
 
             if (appState.error) {
                 mainContainer.innerHTML = `<div class="flex h-full items-center justify-center text-center text-red-400 bg-red-900/50 p-4 rounded-md">${appState.error}</div>`;
@@ -321,7 +337,7 @@ Generate a list of 10 unique, unisex names based on the user's request.
                 mainContainer.append(createPromptDisplay());
             } else if (!appState.isLoading && appState.results.length === 0) {
                  mainContainer.innerHTML = '<div class="flex h-full items-center justify-center text-center text-gray-500"><p class="max-w-md">Your culturally coined names will appear here. Tap the settings icon to open the controls and begin.</p></div>';
-            } else { // Handles both loading and results display
+            } else {
                 mainContainer.append(createResultsGrid());
             }
         }
@@ -362,7 +378,6 @@ Generate a list of 10 unique, unisex names based on the user's request.
             grid.id = 'results-grid';
             grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
             
-            // Re-render existing results if any
             appState.results.forEach(item => grid.appendChild(createNameCard(item)));
 
             container.appendChild(grid);
@@ -551,6 +566,19 @@ Generate a list of 10 unique, unisex names based on the user's request.
             appState.generatedPrompt = null;
             render(); 
 
+            // 4. Check cache first
+            const cacheKey = getCacheKey(appState.selectedLanguages, appState.selectedThemes, appState.selectedStyle);
+            if (!appState.likedNames.length) { // Only use cache for initial, non-riffed requests
+                const cached = responseCache.get(cacheKey);
+                if (cached) {
+                    appState.results = cached;
+                    appState.isLoading = false;
+                    render();
+                    return;
+                }
+            }
+
+
             const prompt = createSystemPrompt(task);
             if (!appState.apiKey) {
                 appState.generatedPrompt = prompt;
@@ -560,13 +588,15 @@ Generate a list of 10 unique, unisex names based on the user's request.
             }
 
             const grid = document.getElementById('results-grid');
+            let finalResults = [];
 
             try {
                 await callGeminiAPIStream(prompt, (newName) => {
                     const filtered = !blacklist.some(b => newName.name.toLowerCase().includes(b.toLowerCase()));
                     if(filtered) {
                         newName.score = scoreName(newName);
-                        appState.results.push(newName);
+                        finalResults.push(newName);
+                        // 5. Progressive loading in action
                         grid.appendChild(createNameCard(newName));
                     }
                 });
@@ -574,14 +604,13 @@ Generate a list of 10 unique, unisex names based on the user's request.
                 console.warn('Streaming failed, using fallback:', streamError);
                 try {
                     const names = await callGeminiFallback(prompt);
-                    // Clear any partial results from failed stream
                     grid.innerHTML = ''; 
-                    appState.results = [];
+                    finalResults = [];
                     names.forEach(newName => {
                         const filtered = !blacklist.some(b => newName.name.toLowerCase().includes(b.toLowerCase()));
                         if(filtered) {
                             newName.score = scoreName(newName);
-                            appState.results.push(newName);
+                            finalResults.push(newName);
                             grid.appendChild(createNameCard(newName));
                         }
                     });
@@ -590,21 +619,25 @@ Generate a list of 10 unique, unisex names based on the user's request.
                 }
             } finally {
                 appState.isLoading = false;
-                appState.results.sort((a,b) => b.score - a.score);
+                appState.results = finalResults.sort((a,b) => b.score - a.score);
+                // 4. Store successful results in cache
+                if (appState.results.length > 0 && !appState.likedNames.length) {
+                    responseCache.set(cacheKey, appState.results);
+                }
                 render();
             }
         }
 
+        // 6. Reduce request size
         function handleGenerateFirstNames() {
             let task;
             if (appState.likedNames.length > 0) {
-                const likedNamesStr = appState.likedNames.map(n => n.name).join(', ');
-                task = `Analyze these liked names: "${likedNamesStr}". Generate 10 new names in a similar style, using themes of "${appState.selectedThemes.join(', ')}" and a "${appState.selectedStyle}" writing style.`;
+                task = `Analyze these liked names: "${appState.likedNames.map(n => n.name).join(', ')}". Generate 6 new names in a similar style.`;
             } else {
-                task = `Generate names from these languages: ${appState.selectedLanguages.join(', ')}, with themes of ${appState.selectedThemes.join(', ')}, in a "${appState.selectedStyle}" style.`;
+                task = `Generate 6 names from languages: ${appState.selectedLanguages.join(', ')}, with themes: ${appState.selectedThemes.join(', ')}, in a "${appState.selectedStyle}" style.`;
             }
-            if (appState.surname) task += ` All suggestions must harmonize with the surname "${appState.surname}".`;
-            if (appState.siblingNames) task += ` All suggestions must be stylistically compatible with the sibling(s) "${appState.siblingNames}".`;
+            if (appState.surname) task += ` Harmonize with surname "${appState.surname}".`;
+            if (appState.siblingNames) task += ` Compatible with siblings "${appState.siblingNames}".`;
             executeGeneration(task);
         }
 
@@ -614,7 +647,7 @@ Generate a list of 10 unique, unisex names based on the user's request.
                 updateMainContent();
                 return;
             }
-            let task = `Generate 10 middle names for the first name "${appState.firstNameForMiddle}". Use themes of ${appState.selectedThemes.join(', ')} and a "${appState.selectedStyle}" style.`;
+            let task = `Generate 6 middle names for the first name "${appState.firstNameForMiddle}". Use themes of ${appState.selectedThemes.join(', ')} and a "${appState.selectedStyle}" style.`;
             if (appState.surname) task += ` The full name, including the surname "${appState.surname}", should be phonetically pleasing.`;
             executeGeneration(task);
         }
