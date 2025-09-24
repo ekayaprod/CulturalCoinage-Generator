@@ -56,12 +56,12 @@
     <div id="root" class="bg-gray-900 w-full min-h-screen flex flex-col"></div>
     <script>
         /**
-         * Cultural Coinage Generator - Correct Model Name
+         * Cultural Coinage Generator - Flash Model & Robust Parser
          */
 
         //--- CONFIGURATION & DATA ---
-        // CORRECTED: Using the stable Gemini 2.5 Pro model name from the latest documentation.
-        const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent";
+        // UPDATE: Switched to the faster Gemini 2.5 Flash model.
+        const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
         const themeOptions = ["Nature", "Cosmic", "Balance", "Strength", "Water", "Light", "Shadow", "Music"];
         const styleOptions = ["Lyrical & Melodic", "Archaic & Mythic", "Minimalist & Modern", "Heroic & Resonant"];
         const blacklist = ["tuna", "ilay", "baran", "nur", "solren", "kuzel", "anal"];
@@ -159,30 +159,40 @@ ${taskPrompt}
             return match ? match.length : 1;
         }
 
+        // UPDATE: Switched to a more robust JSON parsing function
         function parseAndScoreNames(responseText) {
             let names = [];
             try {
-                names = JSON.parse(responseText);
-            } catch {
-                console.warn("Failed JSON parse, attempting fallback regex.");
-                const matches = [...responseText.matchAll(/"name":\s*"([^"]+)"/g)];
-                names = matches.map(match => ({
-                    name: match[1],
-                    roots: 'N/A',
-                    meaning: 'Could not parse full details.'
-                }));
+                // Find the start and end of the JSON array to handle extra text from the model
+                const startIndex = responseText.indexOf('[');
+                const endIndex = responseText.lastIndexOf(']');
+                
+                if (startIndex !== -1 && endIndex !== -1) {
+                    const jsonString = responseText.substring(startIndex, endIndex + 1);
+                    names = JSON.parse(jsonString);
+                } else {
+                    throw new Error("No JSON array found in the response.");
+                }
+            } catch(e) {
+                console.warn("Failed robust JSON parse:", e.message);
+                // Fallback for completely malformed responses
+                return [];
             }
+
             if (!Array.isArray(names)) return [];
+
             const filtered = names.filter(n => n.name && !blacklist.some(b => n.name.toLowerCase().includes(b)));
+            
             filtered.forEach(n => {
                 n.score = 0;
                 if (n.name.length >= 4 && n.name.length <= 10) n.score++;
-                const syllables = getSyllableCount(n.name);
+                const syllables = getSylableCount(n.name);
                 if (syllables >= 2 && syllables <= 3) n.score++;
                 if (/^[a-zA-Z]+$/.test(n.name)) n.score++;
                 if (n.meaning && n.meaning.length > 5) n.score++;
                 if (n.roots && n.roots.length > 5) n.score++;
             });
+            
             return filtered.sort((a, b) => b.score - a.score);
         }
 
@@ -485,7 +495,11 @@ ${taskPrompt}
                 if (!results.length) appState.error = "No names generated. Please adjust selections.";
                 
             } catch (e) {
-                appState.error = e.message;
+                if (e instanceof TypeError) {
+                     appState.error = "Network Error. Check the browser console (F12) for CORS issues and ensure your API key has no HTTP referrer restrictions.";
+                } else {
+                    appState.error = e.message;
+                }
             } finally {
                 appState.isLoading = false;
                 updateMainContent();
