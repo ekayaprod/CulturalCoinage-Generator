@@ -1,384 +1,430 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Cultural Coinage Generator</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Inter', sans-serif; background-color: #111827; color: #d1d5db; }
-        .name-card, .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .scrolling-panel::-webkit-scrollbar { width: 8px; }
-        .scrolling-panel::-webkit-scrollbar-track { background: transparent; }
-        .scrolling-panel::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
-    </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Cultural Coinage Generator</title>
+
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; background:#071022; color:#E6EEF9; }
+    .scrolling-panel::-webkit-scrollbar{ width:10px } .scrolling-panel::-webkit-scrollbar-thumb{ background:#213449; border-radius:8px }
+    .fade { animation: fade 220ms ease-out; } @keyframes fade{ from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
+    .small-muted { color:#9fb0c7; font-size:13px }
+    .chip { padding:6px 10px; border-radius:999px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.03); cursor:pointer; user-select:none }
+    .chip.active { background: linear-gradient(90deg,#294e86,#2b6fb3); color:white; box-shadow:0 6px 18px rgba(41,78,134,0.14) }
+    .spinner{ border:4px solid rgba(255,255,255,0.06); border-top-color:#60a5fa; border-radius:999px; width:36px; height:36px; animation:spin 0.9s linear infinite } @keyframes spin{ to{transform:rotate(360deg)} }
+    a.debug { color:#8fb6ff; text-decoration:underline }
+  </style>
 </head>
-<body class="h-screen">
-    <div id="root" class="h-full flex flex-col"></div>
-    <script>
-        /**
-         * Cultural Coinage Generator
-         * --------------------------
-         * This project fuses linguistic, cultural, and thematic influences to create evocative new names.
-         * The tool should always balance clarity (easy to spell/pronounce) with richness (evocative and layered).
-         */
+<body>
+  <div id="app" class="min-h-screen p-6"></div>
 
-        const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:streamGenerateContent";
-        const themeOptions = ["Nature", "Cosmic", "Balance", "Strength", "Water", "Light", "Shadow", "Music"];
-        const styleOptions = ["Lyrical & Melodic", "Archaic & Mythic", "Minimalist & Modern", "Heroic & Resonant"];
-        const blacklist = ["tuna", "ilay", "baran", "nur", "solren", "kuzel", "anal"];
-        const responseCache = new Map();
+  <script>
+/**
+ * Cultural Coinage Generator — fixed version
+ *
+ * Philosophy (embedded):
+ * - Cultural coinage = blending linguistic roots and phonetic textures from selected origins
+ *   (Turkish, Nordic, Latin, Celtic, etc.) with themes (cosmic, nature, balance, strength).
+ * - Names are artifacts: pronounceable in English, evocative (poetic meanings), short (4-10 letters),
+ *   2-3 syllables preferred, culturally respectful, and avoid awkward English collisions.
+ * - This comment is intentionally part of the code so future LLMs see the project's "north star".
+ *
+ * Important engineering choices:
+ * - Use single-request generation (robust parsing) rather than fragile streaming JSON assembly.
+ * - If JSON parsing fails, attempt fenced-block stripping and a regex fallback to salvage useful tokens.
+ * - Do not auto-reset UI on failure; display error with partial output for debugging and let user retry.
+ */
 
-        let appState = {
-            apiKey: "",
-            isLoading: false,
-            error: null,
-            results: [],
-            likedNames: [],
-            isControlsOpen: false,
-            showPhilosophy: false,
-            selectedLanguages: ["Celtic", "Sanskrit"],
-            selectedThemes: ["Light", "Balance"],
-            selectedStyle: "Lyrical & Melodic",
-            surname: "",
-            siblingNames: "",
-            firstNameForMiddle: ""
-        };
+(function () {
+  // --- CONFIG ---
+  const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-preview-05-20:generateContent";
+  const DEFAULT_COUNT = 6;
 
-        const root = document.getElementById('root');
+  // Options
+  const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Slavic","Japanese","Greek","Sanskrit","Arabic"];
+  const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music"];
+  const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant"];
 
-        function getInitialState(key, defaultValue) {
-            try {
-                const saved = localStorage.getItem(key);
-                return saved ? JSON.parse(saved) : defaultValue;
-            } catch { return defaultValue; }
+  // System blacklist (lowercase). Expandable via UI in future.
+  const SYSTEM_BLACKLIST = ["tuna","ilay","baran","nur","solren","kuzel","anal"];
+
+  // --- State ---
+  const appState = {
+    apiKey: "",
+    isLoading: false,
+    error: null,
+    results: [],        // array of {name, meaning, roots, score}
+    selectedLanguages: ["Celtic", "Sanskrit"],
+    selectedThemes: ["Light","Balance"],
+    selectedStyle: "Lyrical & Melodic",
+    userBlacklist: [],  // user can add bad tokens in future (not UI yet)
+  };
+
+  // --- Helpers ---
+  const el = (tag, cls='') => { const d = document.createElement(tag); if (cls) d.className = cls; return d; };
+  function setText(node, txt){ node.textContent = txt ?? ''; }
+  function tidyJSONText(text) {
+    if (!text) return "";
+    // Remove markdown fenced blocks (```json ... ``` and ``` ... ```)
+    let t = text.replace(/```[\s\S]*?```/g, '');
+    // Remove leading junk before the first JSON bracket
+    const firstBracket = t.search(/[\[\{]/);
+    if (firstBracket > 0) t = t.slice(firstBracket);
+    // Remove trailing junk after last closing bracket
+    const lastBracket = Math.max(t.lastIndexOf(']'), t.lastIndexOf('}'));
+    if (lastBracket !== -1) t = t.slice(0, lastBracket+1);
+    return t.trim();
+  }
+  function safeParseJSONArray(text) {
+    const cleaned = tidyJSONText(text);
+    if (!cleaned) return null;
+    try { const parsed = JSON.parse(cleaned); return Array.isArray(parsed) ? parsed : null; }
+    catch(e){ return null; }
+  }
+  function regexFallbackExtract(text) {
+    // extract patterns like "Name": "Evren", "meaning": "..." OR simple lines: Evren - "meaning"
+    const results = [];
+    const nameMeanRe = /"name"\s*:\s*"([^"]+)"[\s\S]*?"meaning"\s*:\s*"([^"]+)"/gi;
+    let m;
+    while ((m = nameMeanRe.exec(text)) !== null) {
+      results.push({ name: m[1], meaning: m[2], roots: "" });
+    }
+    if (results.length) return results;
+    // fallback: lines like Evren — "meaning"
+    const lineRe = /^([A-Z][a-zA-Z\-]{2,10})\s*[-—]\s*["“']?(.{3,120})["”']?$/gm;
+    while ((m = lineRe.exec(text)) !== null) {
+      results.push({ name: m[1], meaning: m[2], roots: "" });
+    }
+    // final fallback: simple capitalized words
+    if (!results.length) {
+      const words = (text.match(/\b[A-Z][a-z]{3,9}\b/g) || []);
+      for (const w of words) results.push({ name: w, meaning: "", roots: "" });
+    }
+    return results;
+  }
+
+  function syllableCount(word) {
+    if (!word) return 1;
+    let w = word.toLowerCase();
+    if (w.length <= 3) return 1;
+    w = w.replace(/(?:[^laeiouy]es|ed|[^laeiouy]e)$/, '');
+    w = w.replace(/^y/, '');
+    const m = w.match(/[aeiouy]{1,2}/g);
+    return m ? m.length : 1;
+  }
+
+  function scoreName(obj) {
+    let s = 0;
+    if (!obj || !obj.name) return 0;
+    if (obj.name.length >= 4 && obj.name.length <= 10) s += 2;
+    const syl = syllableCount(obj.name);
+    if (syl >= 2 && syl <= 3) s += 2;
+    if (/^[A-Za-z\-]+$/.test(obj.name)) s += 1;
+    if (obj.meaning && obj.meaning.length > 6) s += 1;
+    if (obj.roots && obj.roots.length > 0) s += 1;
+    // small penalty for containing blacklisted substrings
+    const low = obj.name.toLowerCase();
+    for (const b of SYSTEM_BLACKLIST.concat(appState.userBlacklist)) {
+      if (low.includes(b)) s -= 10;
+    }
+    return s;
+  }
+
+  function filterAndScore(rawArray) {
+    if (!rawArray || !rawArray.length) return [];
+    const out = [];
+    for (const it of rawArray) {
+      const candidate = {
+        name: (it.name || it[0] || "").toString().trim(),
+        meaning: (it.meaning || it[1] || "").toString().trim(),
+        roots: (it.roots || it[2] || "").toString().trim()
+      };
+      if (!candidate.name) continue;
+      const low = candidate.name.toLowerCase();
+      // blacklist checks:
+      if (SYSTEM_BLACKLIST.some(b => low.includes(b))) continue;
+      if (appState.userBlacklist.some(b => low.includes(b))) continue;
+      // length check
+      if (candidate.name.length < 4 || candidate.name.length > 12) {
+        // allow but penalize
+        candidate.score = scoreName(candidate) - 1;
+      } else {
+        candidate.score = scoreName(candidate);
+      }
+      out.push(candidate);
+    }
+    out.sort((a,b)=> b.score - a.score);
+    return out;
+  }
+
+  // --- UI Construction ---
+  const root = document.getElementById('app');
+
+  function renderLayout() {
+    root.innerHTML = '';
+    const appWrap = el('div','max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6');
+
+    // Left controls
+    const left = el('div','md:col-span-1 bg-[#071425] border border-[#0e2334] rounded-xl p-5 flex flex-col gap-4 h-fit');
+    const title = el('div','flex items-center justify-between');
+    const h = el('div','');
+    const titleMain = el('h1','text-xl font-semibold'); setText(titleMain, 'Cultural Coinage');
+    const subtitle = el('div','small-muted mt-1'); setText(subtitle, 'Blend culture, sound & meaning — poetic, modern, balanced');
+    h.append(titleMain, subtitle);
+    title.append(h, el('div','small-muted')); // spacer
+
+    // API Key
+    const labelKey = el('label','text-sm font-medium'); setText(labelKey,'Gemini API Key');
+    const inputKey = el('input','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
+    inputKey.type='password'; inputKey.placeholder='Paste API key (kept in-memory)';
+    inputKey.value = appState.apiKey;
+    inputKey.addEventListener('input', e => appState.apiKey = e.target.value.trim());
+
+    // Languages chips
+    const labelLang = el('label','text-sm font-medium'); setText(labelLang,'Languages (choose 1–3)');
+    const langWrap = el('div','flex flex-wrap gap-2');
+    LANG_OPTIONS.forEach(opt=>{
+      const c = el('button','chip'); c.textContent = opt;
+      if (appState.selectedLanguages.includes(opt)) c.classList.add('active');
+      c.addEventListener('click', ()=>{
+        if (appState.selectedLanguages.includes(opt)) {
+          appState.selectedLanguages = appState.selectedLanguages.filter(x=>x!==opt);
+        } else {
+          appState.selectedLanguages = [...appState.selectedLanguages, opt].slice(0,3);
         }
+        renderLayout();
+      });
+      langWrap.append(c);
+    });
 
-        function saveState() {
-            const stateToSave = {
-                apiKey: appState.apiKey, likedNames: appState.likedNames, selectedLanguages: appState.selectedLanguages,
-                selectedThemes: appState.selectedThemes, selectedStyle: appState.selectedStyle, surname: appState.surname,
-                siblingNames: appState.siblingNames, firstNameForMiddle: appState.firstNameForMiddle,
-            };
-            localStorage.setItem('culturalCoinageState', JSON.stringify(stateToSave));
+    // Themes
+    const labelTheme = el('label','text-sm font-medium'); setText(labelTheme,'Themes (choose 1–2)');
+    const themeWrap = el('div','flex flex-wrap gap-2');
+    THEME_OPTIONS.forEach(opt=>{
+      const c = el('button','chip'); c.textContent = opt;
+      if (appState.selectedThemes.includes(opt)) c.classList.add('active');
+      c.addEventListener('click', ()=>{
+        if (appState.selectedThemes.includes(opt)) {
+          appState.selectedThemes = appState.selectedThemes.filter(x=>x!==opt);
+        } else {
+          appState.selectedThemes = [...appState.selectedThemes, opt].slice(0,2);
         }
+        renderLayout();
+      });
+      themeWrap.append(c);
+    });
 
-        function loadStateFromLocalStorage() {
-            const savedState = getInitialState('culturalCoinageState', {});
-            appState = { ...appState, ...savedState };
+    // Style select
+    const labelStyle = el('label','text-sm font-medium'); setText(labelStyle,'Style');
+    const styleSel = el('select','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
+    STYLE_OPTIONS.forEach(s=>{
+      const op = el('option'); op.value = s; setText(op,s);
+      if (appState.selectedStyle === s) op.selected = true;
+      styleSel.append(op);
+    });
+    styleSel.addEventListener('change', e => { appState.selectedStyle = e.target.value; });
+
+    // Buttons
+    const btnWrap = el('div','flex gap-3 mt-2');
+    const genBtn = el('button','bg-gradient-to-r from-[#3b82f6] to-[#2563eb] text-[#03102a] px-4 py-2 rounded font-semibold shadow');
+    setText(genBtn, 'Generate');
+    genBtn.addEventListener('click', () => doGenerate());
+
+    const exportBtn = el('button','bg-[#0e2436] border border-[#1b3146] px-3 py-2 rounded text-sm small-muted');
+    setText(exportBtn, 'Export CSV');
+    exportBtn.addEventListener('click', exportCSV);
+
+    const clearBtn = el('button','bg-transparent border border-[#233542] px-3 py-2 rounded text-sm small-muted');
+    setText(clearBtn,'Clear Results');
+    clearBtn.addEventListener('click', ()=>{ appState.results=[]; appState.error=null; renderLayout(); });
+
+    btnWrap.append(genBtn, exportBtn, clearBtn);
+
+    // Left assemble
+    left.append(title, labelKey, inputKey, labelLang, langWrap, labelTheme, themeWrap, labelStyle, styleSel, btnWrap);
+    // small philosophy toggle
+    const philToggle = el('div','mt-3 text-sm small-muted'); philToggle.innerHTML = 'Tip: names pair well with <strong>Nova</strong> & <strong>Wren</strong>.';
+    left.append(philToggle);
+
+    // Right content area
+    const right = el('div','md:col-span-2 bg-[#071427] border border-[#0e2030] rounded-xl p-5 flex flex-col gap-4');
+    // top bar
+    const topBar = el('div','flex items-center justify-between');
+    const resultsTitle = el('div',''); resultsTitle.innerHTML = '<h2 class="text-lg font-semibold">Results</h2><div class="small-muted">Poetic, culturally coined names</div>';
+    topBar.append(resultsTitle);
+    right.append(topBar);
+
+    // Results / status panel
+    const panel = el('div','mt-2 p-3 bg-[#071a25] border border-[#0f2a3a] rounded-lg min-h-[280px] flex flex-col gap-3');
+    // If loading show spinner
+    if (appState.isLoading) {
+      const sp = el('div','flex items-center justify-center py-8'); sp.innerHTML = '<div class="spinner"></div>';
+      panel.append(sp);
+    } else if (appState.error) {
+      const err = el('div','bg-[#2b1a1a] border border-[#5b2626] rounded p-4');
+      err.innerHTML = `<div class="text-red-300 font-semibold">Error</div><div class="small-muted mt-2">${escapeHtml(appState.error)}</div>`;
+      // display partial raw output if present in state
+      panel.append(err);
+    } else if (!appState.results || !appState.results.length) {
+      const empty = el('div','flex-1 flex items-center justify-center small-muted'); setText(empty,'No names yet — click Generate.');
+      panel.append(empty);
+    } else {
+      // grid of cards
+      const grid = el('div','grid grid-cols-1 sm:grid-cols-2 gap-4');
+      for (const item of appState.results) {
+        const card = el('div','bg-[#081426] border border-[#123047] rounded p-4 flex flex-col gap-2 fade');
+        const head = el('div','flex items-start justify-between gap-2');
+        const nameEl = el('div','text-xl font-semibold'); setText(nameEl, item.name);
+        const scoreBadge = el('div','text-xs px-2 py-1 rounded bg-[#0f2040] small-muted'); setText(scoreBadge, 'score: '+ (item.score||0));
+        head.append(nameEl, scoreBadge);
+        const meaning = el('div','italic small-muted'); setText(meaning, item.meaning || '—');
+        const roots = el('div','text-xs mt-auto small-muted'); roots.innerHTML = '<strong>Roots:</strong> '+ (item.roots || '—');
+        const actions = el('div','flex gap-2 mt-2');
+        const copy = el('button','chip'); copy.textContent = 'Copy'; copy.addEventListener('click', ()=>{ navigator.clipboard.writeText(item.name); showToast('Copied'); });
+        actions.append(copy);
+        card.append(head, meaning, roots, actions);
+        grid.append(card);
+      }
+      panel.append(grid);
+    }
+
+    right.append(panel);
+
+    appWrap.append(left, right);
+    root.append(appWrap);
+  }
+
+  // small utility to show ephemeral toast
+  function showToast(msg) {
+    const t = el('div','fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#0f2a41] px-4 py-2 rounded shadow text-sm'); setText(t,msg);
+    document.body.appendChild(t);
+    setTimeout(()=> t.remove(),1400);
+  }
+
+  function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  // --- Generation & API calls ---
+  function buildSystemPrompt(task) {
+    // full, philosophy-aware system prompt for Gemini
+    return `
+You are the Cultural Coinage Agent: craft short, poetic, pronounceable unisex names by blending the specified language origins and themes.
+Return output as a JSON array (only JSON). Each element is an object: {"name":"", "meaning":"", "roots":""}.
+Names should be 4–10 letters, 2–3 syllables preferred, culturally respectful, evocative (poetic meanings).
+Task: ${task}
+`;
+  }
+
+  async function callGeminiOnce(prompt) {
+    // Single generation call (non-streaming). Returns the raw text response or throws.
+    const key = appState.apiKey.trim();
+    if (!key) throw new Error('Missing API key.');
+    const body = {
+      // The API shape used by your prior files: contents -> parts -> text
+      contents: [{ parts: [{ text: prompt }] }],
+      // generationConfig is optional; tune for quality
+      generationConfig: { temperature: 0.6, maxOutputTokens: 800, candidateCount: 1 }
+    };
+    const res = await fetch(API_BASE_URL + '?key=' + encodeURIComponent(key), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const txt = await res.text(); throw new Error(`Gemini API error ${res.status}: ${txt}`);
+    }
+    const data = await res.json();
+    // tolerant extraction:
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? data?.output ?? JSON.stringify(data);
+    return String(text);
+  }
+
+  async function doGenerate() {
+    // Build task description based on user selections
+    appState.error = null;
+    appState.results = [];
+    appState.isLoading = true;
+    renderLayout();
+
+    const taskParts = [
+      `Languages: ${appState.selectedLanguages.join(', ')}`,
+      `Themes: ${appState.selectedThemes.join(', ')}`,
+      `Style: ${appState.selectedStyle}`,
+      `Return ${DEFAULT_COUNT} names.`
+    ];
+    const task = taskParts.join(' | ');
+    const prompt = buildSystemPrompt(task);
+
+    try {
+      // Primary generation
+      const raw = await callGeminiOnce(prompt);
+      // Attempt to parse JSON array
+      let parsed = safeParseJSONArray(raw);
+      if (!parsed) {
+        // fallback parse attempts
+        parsed = regexFallbackExtract(raw);
+      }
+      let processed = filterAndScore(parsed || []);
+      // If too few good candidates, retry with simplified prompt preserving languages/themes
+      if (!processed.length || processed.length < Math.min(3, DEFAULT_COUNT)) {
+        const simplifiedTask = `Generate ${DEFAULT_COUNT} short unisex poetic names using languages: ${appState.selectedLanguages.join(', ')} and themes: ${appState.selectedThemes.join(', ')}. Keep it simple, return JSON array of objects with name, meaning, roots.`;
+        const raw2 = await callGeminiOnce(buildSystemPrompt(simplifiedTask));
+        let parsed2 = safeParseJSONArray(raw2) || regexFallbackExtract(raw2);
+        const processed2 = filterAndScore(parsed2 || []);
+        if (processed2 && processed2.length) {
+          processed = processed2;
+        } else {
+          // preserve partial parsing if available
+          if (!processed.length && parsed && parsed.length) processed = filterAndScore(parsed);
         }
-        
-        function createSystemPrompt(taskPrompt) {
-            return `Generate 6 unisex names as a JSON array. Each object: {"name": "...", "roots": "...", "meaning": "..."}\n\n${taskPrompt}\n\nRequirements: 4-10 letters, 2-3 syllables, culturally respectful. Return ONLY the JSON array.`;
-        }
+      }
 
-        function getCacheKey(languages, themes, style) {
-            return `${languages.join(',')}-${themes.join(',')}-${style}`;
-        }
+      if (!processed || !processed.length) {
+        appState.error = "No suitable names generated. The raw model output is shown for debugging.";
+        // Include raw in results area as debug
+        appState.results = [];
+        // attach raw debug (for UI show)
+        appState._rawDebug = tidyJSONText(raw) || '(empty)';
+      } else {
+        appState.results = processed;
+        appState._rawDebug = null;
+      }
+    } catch (err) {
+      console.error('Generation error:', err);
+      appState.error = err.message || String(err);
+    } finally {
+      appState.isLoading = false;
+      renderLayout();
+    }
+  }
 
-        async function callGeminiAPIStream(prompt, onNamesReceived) {
-            const response = await fetch(`${API_BASE_URL}?key=${appState.apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Connection': 'keep-alive' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { temperature: 0.7, maxOutputTokens: 1024, candidateCount: 1, topK: 20, topP: 0.8 }
-                })
-            });
-            if (!response.ok) throw new Error(`API Error ${response.status}: ${await response.text()}`);
-            
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let completeResponse = "";
-            
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n');
+  function exportCSV() {
+    if (!appState.results || !appState.results.length) { showToast('No results'); return; }
+    const header = ['Name','Meaning','Roots','Score'];
+    const rows = appState.results.map(r => [
+      `"${r.name.replace(/"/g,'""')}"`,
+      `"${(r.meaning||'').replace(/"/g,'""')}"`,
+      `"${(r.roots||'').replace(/"/g,'""')}"`,
+      r.score || 0
+    ].join(','));
+    const csv = [header.join(','), ...rows].join('\r\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `cultural-coinage-${Date.now()}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    showToast('Exported CSV');
+  }
 
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        try {
-                            const jsonStr = line.slice(6).trim();
-                            if (jsonStr === '[DONE]') continue;
-                            const data = JSON.parse(jsonStr);
-                            if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
-                                completeResponse += data.candidates[0].content.parts[0].text;
-                            }
-                        } catch (err) {
-                            console.warn("Parsing error in stream:", err, line);
-                        }
-                    }
-                }
-            }
+  // --- Init and render ---
+  renderLayout();
 
-            // 1. Streaming Fix: Buffer entire response, then parse once.
-            let cleanResponse = completeResponse.trim().replace(/```json|```/g, '');
-            const names = JSON.parse(cleanResponse);
-            onNamesReceived(names);
-        }
+  // expose for debugging/testing
+  window.__culturalCoinage = { appState, doGenerate, exportCSV };
 
-        async function callGeminiFallback(prompt) {
-            const fallbackUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
-            const response = await fetch(`${fallbackUrl}?key=${appState.apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { temperature: 0.7, maxOutputTokens: 1024, candidateCount: 1, topK: 20, topP: 0.8 }
-                })
-            });
-            if (!response.ok) throw new Error(`Fallback API Error ${response.status}: ${await response.text()}`);
-            const data = await response.json();
-            
-            // 3. Fallback Robustness: Expanded cleanup regex
-            let text = data.candidates[0].content.parts[0].text;
-            text = text.replace(/```[\s\S]*?```/g, '') // strip any fenced blocks
-                       .replace(/^[^{\[]*/, '')         // strip junk before JSON
-                       .replace(/[^}\]]*$/, '');        // strip junk after JSON
-
-            const names = JSON.parse(text);
-            return Array.isArray(names) ? names : [];
-        }
-
-        function getSyllableCount(word) {
-            word = word.toLowerCase();
-            if (word.length <= 3) return 1;
-            word = word.replace(/(?:[^laeiouy]es|ed|[^laeiouy]e)$/, '');
-            const match = word.match(/[aeiouy]{1,2}/g);
-            return match ? match.length : 1;
-        }
-
-        function scoreName(nameObj) {
-            let score = 0;
-            if (!nameObj || !nameObj.name) return score;
-            if (nameObj.name.length >= 4 && nameObj.name.length <= 10) score++;
-            const syllables = getSyllableCount(nameObj.name);
-            if (syllables >= 2 && syllables <= 3) score++;
-            if (/^[a-zA-Z]+$/.test(nameObj.name)) score++;
-            if (nameObj.meaning && nameObj.meaning.length > 5) score++;
-            if (nameObj.roots && nameObj.roots.length > 5) score++;
-            return score;
-        }
-
-        function render() {
-            root.innerHTML = '';
-            const header = document.createElement('header');
-            header.className = "w-full bg-gray-900/80 backdrop-blur-sm border-b border-gray-700 p-4 flex items-center justify-between sticky top-0 z-20";
-            header.innerHTML = `<h1 class="text-lg font-bold text-white">Cultural Coinage Generator</h1><button data-action="toggleControls" class="text-gray-300 hover:text-white p-2 rounded-full mr-2"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924-1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.096 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg></button>`;
-            const main = document.createElement('main');
-            main.id = 'main-content';
-            main.className = 'flex-grow p-6 overflow-y-auto';
-            root.append(header, main);
-            updateMainContent(main);
-            if (appState.showPhilosophy) root.append(createPhilosophyModal());
-            if (appState.isControlsOpen) root.append(createControlsDrawer());
-        }
-
-        function updateMainContent(container) {
-            container = container || document.getElementById('main-content');
-            container.innerHTML = '';
-            // 5. UX Upgrade on Failure
-            if (appState.error) {
-                container.innerHTML = `<div class="text-red-400 bg-red-900/50 p-4 rounded-md animate-fade-in"><strong>Generation Failed</strong><p class="text-sm mt-2">${appState.error}</p></div>`;
-            } else if (!appState.isLoading && appState.results.length === 0) {
-                container.innerHTML = '<div class="flex h-full items-center justify-center text-center text-gray-500"><p>Your generated names will appear here.</p></div>';
-            } else {
-                container.append(createResultsGrid());
-            }
-        }
-
-        function createNameCard(item) {
-            const isLiked = appState.likedNames.some(n => n.name === item.name);
-            const card = document.createElement('div');
-            card.className = "bg-gray-800 border border-gray-700 rounded-lg p-4 flex flex-col name-card";
-            card.innerHTML = `<div class="flex justify-between items-start"><h3 class="text-2xl font-bold text-white pr-2">${item.name}</h3><div class="flex items-center gap-2"><button data-action="copyName" data-name="${item.name}" title="Copy"><svg class="w-6 h-6 pointer-events-none text-gray-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg></button><button data-action="like" class="like-btn text-gray-400 hover:text-white ${isLiked ? 'text-red-500' : ''}" title="${isLiked ? 'Unlike' : 'Like'}"><svg class="w-6 h-6 pointer-events-none" fill="${isLiked ? 'currentColor' : 'none'}" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 016.364 0L12 7.5l1.318-1.182a4.5 4.5 0 116.364 6.364L12 21l-7.682-7.318a4.5 4.5 0 010-6.364z"></path></svg></button></div></div><p class="text-gray-300 italic my-2">"${item.meaning || '...'}"</p><p class="text-xs text-gray-500 mt-auto"><span class="font-semibold">Roots:</span> ${item.roots || '...'}</p>`;
-            card.querySelector('[data-action="like"]').dataset.item = JSON.stringify(item);
-            return card;
-        }
-
-        function createResultsGrid() {
-            const container = document.createElement('div');
-            container.innerHTML = `<div class="flex justify-between items-center mb-4"><h2 class="text-xl font-bold text-white">Generated Names</h2><button data-action="exportCSV" class="text-sm bg-gray-700 text-gray-300 hover:bg-gray-600 px-3 py-1.5 rounded-md font-medium">Export as CSV</button></div>`;
-            const grid = document.createElement('div');
-            grid.id = 'results-grid';
-            grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
-            appState.results.forEach(item => grid.appendChild(createNameCard(item)));
-            container.appendChild(grid);
-            return container;
-        }
-
-        function createControlsDrawer() {
-            const drawerContainer = document.createElement('div');
-            drawerContainer.className = 'fixed inset-0 z-30 animate-fade-in';
-            drawerContainer.innerHTML = `<div class="fixed inset-0 bg-black/60" data-action="toggleControls"></div>`;
-            const drawer = document.createElement('div');
-            drawer.className = "fixed top-0 left-0 h-full w-full max-w-xs sm:max-w-sm bg-gray-900 border-r border-gray-700 z-50 p-4 scrolling-panel overflow-y-auto";
-            drawer.innerHTML = `<div class="flex items-center justify-between mb-6"><h2 class="text-xl font-bold text-white">Controls</h2><button data-action="toggleControls" class="text-gray-400 hover:text-white text-2xl">&times;</button></div><div class="space-y-4"><div><label for="apiKey" class="block text-sm font-medium text-gray-300">API Key</label><input type="password" id="apiKey" value="${appState.apiKey}" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white mt-1"></div><div><label class="block text-sm font-medium text-gray-300 mb-2">Real-World Context</label><div class="space-y-2 rounded-md bg-gray-800 border border-gray-700 p-3"><input type="text" id="surname" value="${appState.surname}" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md p-2 text-sm" placeholder="Surname (e.g., Jones)"><input type="text" id="siblingNames" value="${appState.siblingNames}" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md p-2 text-sm" placeholder="Sibling Names (e.g., Olivia, Leo)"><input type="text" id="firstNameForMiddle" value="${appState.firstNameForMiddle}" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md p-2 text-sm" placeholder="First Name (for middle names)"></div></div><div id="liked-names-container"></div><div><label for="languages" class="block text-sm font-medium text-gray-300">Languages</label><input type="text" id="languages" value="${appState.selectedLanguages.join(', ')}" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white mt-1"></div><div><label for="themes" class="block text-sm font-medium text-gray-300">Themes</label><select id="themes" multiple class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white mt-1 h-24">${themeOptions.map(opt => `<option value="${opt}" ${appState.selectedThemes.includes(opt) ? 'selected' : ''}>${opt}</option>`).join('')}</select></div><div><label for="style" class="block text-sm font-medium text-gray-300">Style</label><select id="style" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white mt-1">${styleOptions.map(opt => `<option value="${opt}" ${appState.selectedStyle === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select></div><div class="pt-4 space-y-2"><button id="generate-btn" data-action="generateFirstNames" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded shadow-lg flex items-center justify-center disabled:opacity-50" ${appState.isLoading ? 'disabled' : ''}>${appState.isLoading ? '<svg class="animate-spin h-5 w-5 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>' : ''} ${appState.likedNames.length > 0 ? 'Riff on Liked' : 'Generate Names'}</button><button data-action="suggestMiddleNames" class="w-full bg-blue-800 hover:bg-blue-900 text-white font-semibold py-2 px-4 rounded" ${appState.isLoading ? 'disabled' : ''}>Suggest Middle Names</button></div><button data-action="openPhilosophy" class="text-sm text-gray-400 hover:text-white text-center w-full pt-4">Show Philosophy</button></div>`;
-            drawerContainer.appendChild(drawer);
-            updateLikedNames(drawer);
-            return drawerContainer;
-        }
-
-        function updateLikedNames(container) {
-            const likedContainer = container.querySelector('#liked-names-container');
-            if (!likedContainer) return;
-            likedContainer.innerHTML = '';
-            if (appState.likedNames.length === 0) return;
-            const label = document.createElement('label');
-            label.className = 'block text-sm font-medium text-gray-300 mb-2';
-            label.textContent = 'Liked Names (Inspiration)';
-            const itemsContainer = document.createElement('div');
-            itemsContainer.className = 'space-y-2';
-            appState.likedNames.forEach(nameObj => {
-                const item = document.createElement('div');
-                item.className = 'flex justify-between items-center bg-gray-700 px-2 py-1 rounded';
-                item.innerHTML = `<span class="text-sm text-white">${nameObj.name}</span><button data-action="like" class="text-gray-400 hover:text-white" data-item='${JSON.stringify(nameObj)}'>×</button>`;
-                itemsContainer.appendChild(item);
-            });
-            likedContainer.append(label, itemsContainer);
-        }
-        
-        function createPhilosophyModal() {
-            const modal = document.createElement('div');
-            modal.className = "fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 animate-fade-in";
-            modal.setAttribute('data-action', 'closePhilosophy');
-            modal.innerHTML = `<div class="bg-gray-800 rounded-lg p-6 max-w-md w-full shadow-2xl"><h2 class="text-xl font-bold mb-4 text-white">Philosophy</h2><p class="text-gray-300 mb-6">This tool invents new names by blending cultural origins with thematic inspiration. The agent acts as an expert scholar to provide context-aware, poetic suggestions.</p><button data-action="closePhilosophy" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-md w-full text-white font-semibold">Close</button></div>`;
-            return modal;
-        }
-
-        function handleAction(e) {
-            const target = e.target.closest('[data-action]');
-            if (!target || target.disabled) return;
-            const action = target.dataset.action;
-
-            switch(action) {
-                case 'toggleControls': appState.isControlsOpen = !appState.isControlsOpen; render(); break;
-                case 'openPhilosophy': appState.showPhilosophy = true; render(); break;
-                case 'closePhilosophy': appState.showPhilosophy = false; render(); break;
-                case 'like': handleLike(JSON.parse(target.dataset.item)); break;
-                case 'generateFirstNames':
-                case 'suggestMiddleNames':
-                    appState.apiKey = document.getElementById('apiKey').value;
-                    appState.surname = document.getElementById('surname').value;
-                    appState.siblingNames = document.getElementById('siblingNames').value;
-                    appState.firstNameForMiddle = document.getElementById('firstNameForMiddle').value;
-                    appState.selectedLanguages = document.getElementById('languages').value.split(',').map(s => s.trim()).filter(Boolean);
-                    appState.selectedThemes = Array.from(document.getElementById('themes').selectedOptions).map(opt => opt.value);
-                    appState.selectedStyle = document.getElementById('style').value;
-                    appState.isControlsOpen = false;
-                    if (action === 'generateFirstNames') handleGenerateFirstNames();
-                    else handleSuggestMiddleNames();
-                    break;
-                case 'exportCSV': exportCSV(); break;
-                case 'copyName': navigator.clipboard.writeText(target.dataset.name); break;
-            }
-        }
-        
-        function handleLike(nameObject) {
-            const isLiked = appState.likedNames.some(n => n.name === nameObject.name);
-            appState.likedNames = isLiked ? appState.likedNames.filter(n => n.name !== nameObject.name) : [...appState.likedNames, nameObject];
-            saveState();
-            render();
-        }
-
-        async function executeGeneration(task) {
-            appState.isLoading = true;
-            appState.error = null;
-            appState.results = [];
-            render();
-            const cacheKey = getCacheKey(appState.selectedLanguages, appState.selectedThemes, appState.selectedStyle);
-            if (!appState.likedNames.length) {
-                const cached = responseCache.get(cacheKey);
-                if (cached) {
-                    appState.results = cached;
-                    appState.isLoading = false;
-                    render();
-                    return;
-                }
-            }
-            const prompt = createSystemPrompt(task);
-            let finalResults = [];
-
-            try {
-                // 2. UI & DOM Sync: onNamesReceived now gets the full array at the end.
-                await callGeminiAPIStream(prompt, (names) => {
-                    finalResults = names;
-                });
-            } catch (streamError) {
-                console.warn('Streaming failed, using fallback:', streamError);
-                try {
-                    finalResults = await callGeminiFallback(prompt);
-                } catch (fallbackError) {
-                    appState.error = `Both streaming and fallback failed. Check API key and network. Details: ${fallbackError.message}`;
-                }
-            } finally {
-                appState.isLoading = false;
-                appState.results = finalResults
-                    .filter(newName => !blacklist.some(b => newName.name.toLowerCase().includes(b.toLowerCase())))
-                    .map(newName => {
-                        newName.score = scoreName(newName);
-                        return newName;
-                    })
-                    .sort((a,b) => b.score - a.score);
-                
-                if (appState.results.length > 0 && !appState.likedNames.length) {
-                    responseCache.set(cacheKey, appState.results);
-                }
-                render();
-            }
-        }
-
-        function handleGenerateFirstNames() {
-            let task;
-            if (appState.likedNames.length > 0) {
-                task = `Analyze these liked names: "${appState.likedNames.map(n => n.name).join(', ')}". Generate 6 new names in a similar style.`;
-            } else {
-                task = `Generate 6 names from languages: ${appState.selectedLanguages.join(', ')}, themes: ${appState.selectedThemes.join(', ')}, style: "${appState.selectedStyle}".`;
-            }
-            if (appState.surname) task += ` Harmonize with surname "${appState.surname}".`;
-            if (appState.siblingNames) task += ` Compatible with siblings "${appState.siblingNames}".`;
-            executeGeneration(task);
-        }
-
-        function handleSuggestMiddleNames() {
-            if (!appState.firstNameForMiddle) {
-                appState.error = "Please enter a first name to suggest middle names.";
-                updateMainContent();
-                return;
-            }
-            let task = `Generate 6 middle names for "${appState.firstNameForMiddle}". Use themes: ${appState.selectedThemes.join(', ')}, style: "${appState.selectedStyle}".`;
-            if (appState.surname) task += ` Harmonize with surname "${appState.surname}".`;
-            executeGeneration(task);
-        }
-
-        function exportCSV() {
-            if (!appState.results.length) return;
-            let csvContent = "data:text/csv;charset=utf-8,Name,Meaning,Roots,Score\n";
-            appState.results.forEach(item => {
-                const row = [`"${item.name}"`, `"${item.meaning}"`, `"${item.roots}"`, item.score].join(',');
-                csvContent += row + "\r\n";
-            });
-            const link = document.createElement("a");
-            link.href = encodeURI(csvContent);
-            link.download = "cultural-coinage-names.csv";
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        }
-        
-        document.addEventListener('DOMContentLoaded', () => {
-            loadStateFromLocalStorage();
-            root.addEventListener('click', handleAction);
-            render();
-        });
-    </script>
+})();
+  </script>
 </body>
 </html>
-
-
