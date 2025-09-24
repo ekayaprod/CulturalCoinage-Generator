@@ -141,7 +141,7 @@
 
       // Enrich short meanings into poetic form
       if (meaning && meaning.split(/\s+/).length < 3) {
-        meaning = `${meaning} — a name that carries ${appState.selectedThemes.join(" and ").toLowerCase()}`;
+        meaning = `${meaning} — evokes ${appState.selectedThemes.join(" and ").toLowerCase()}, a guiding presence.`;
       }
 
       return { name, meaning, roots, cluster };
@@ -490,17 +490,19 @@ Your craft is name-smithing: fusing cultural morphemes into new, resonant names 
 
 PRINCIPLES:
 - Names are artifacts, not random strings.
+- Use only morphemes and etymologies from the languages listed in TASK. Do not include other languages. If a gap exists, invent a new coined root marked as (coined).
 - Draw on morphemes, syllables, and phonetic textures from the selected languages in the TASK.
 - Adapt them with creativity: use phonological glue (connecting vowels, softened endings), and reshape roots for flow.
 - Invent new morphemes if necessary. Mark them clearly as (coined) in 'roots'.
 - Balance sound and meaning: each name must have resonance, story, and beauty.
 - Meaning should not be a dictionary definition. Instead, write it as a short poetic note connecting the parts to the chosen themes.
+- Roots clarity: Spell out each part of the root, e.g., "astro (Greek: star) + ren (Nordic: raven)".
 - Style must follow the selected tone (lyrical, archaic, heroic, etc.).
 
 SESSION CONTEXT:
 ${sessionMemoryInstruction}
 Blacklist: ${fullBlacklist.join(", ")}
-Contextual harmony: Consider sibling names, surnames, and gender preference ("${gender}") when shaping results, but keep names free, poetic, and universal in tone.
+Contextual harmony: Shape names to lean ${gender}-appropriate when relevant, while keeping poetic freedom. Consider sibling names and surnames.
 
 OUTPUT FORMAT:
 Return ONLY a raw JSON array of objects, with no markdown or text wrapping. 
