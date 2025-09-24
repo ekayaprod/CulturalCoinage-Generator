@@ -110,10 +110,22 @@
 
   function regexFallbackExtract(text) {
     const results = [];
-    const nameMeanRe = /"name"\s*:\s*"([^"]+)"[\s\S]*?"meaning"\s*:\s*"([^"]+)"/gi;
-    let m;
-    while ((m = nameMeanRe.exec(text)) !== null) {
-      results.push({ name: m[1], meaning: m[2], roots: "" });
+    // Split the text by the "name" key to isolate each entry.
+    // This is more robust than a single regex as it doesn't depend on field order.
+    const entries = text.split(/"name"\s*:/).slice(1); // slice(1) to discard anything before the first "name"
+
+    for (const entry of entries) {
+        const nameMatch = entry.match(/^\s*"([^"]+)"/);
+        const meaningMatch = entry.match(/"meaning"\s*:\s*"([^"]+)"/);
+        const rootsMatch = entry.match(/"roots"\s*:\s*"([^"]*)"/);
+
+        if (nameMatch && nameMatch[1]) {
+            results.push({
+                name: nameMatch[1].trim(),
+                meaning: meaningMatch ? meaningMatch[1].trim() : "",
+                roots: rootsMatch ? rootsMatch[1].trim() : ""
+            });
+        }
     }
     return results;
   }
@@ -127,7 +139,7 @@
     const syl = (obj.name.toLowerCase().match(/[aeiouy]{1,2}/g) || []).length;
     if (syl >= 2 && syl <= 3) s += 2;
     if (obj.meaning?.length > 6) s += 1;
-    if (obj.roots?.length > 0) s += 1;
+    if (obj.roots?.length > 1) s += 1; // Require more than just a dash for a point
     return s;
   }
 
@@ -368,7 +380,7 @@
   function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
   function buildSystemPrompt(task) {
-    return `You are the Cultural Coinage Agent: craft short, poetic, pronounceable unisex names by blending the specified language origins and themes. Return output as a JSON array (only JSON). Each element is an object: {"name":"", "meaning":"", "roots":""}. Names should be 4–10 letters, 2–3 syllables preferred, culturally respectful, evocative (poetic meanings). Task: ${task}`;
+    return `You are the Cultural Coinage Agent: craft short, poetic, pronounceable unisex names by blending the specified language origins and themes. Return output as a JSON array of objects (JSON only). Each object MUST have three keys: "name", "meaning", and "roots". The "roots" field is crucial: it must contain a detailed explanation of the linguistic and cultural origins for the name. Names should be 4–10 letters, 2–3 syllables preferred, culturally respectful, and have evocative (poetic) meanings. Task: ${task}`;
   }
 
   async function callGeminiOnce(prompt) {
@@ -456,5 +468,3 @@
   </script>
 </body>
 </html>
-
-
