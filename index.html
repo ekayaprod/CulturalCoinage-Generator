@@ -186,7 +186,7 @@ ${taskPrompt}
             filtered.forEach(n => {
                 n.score = 0;
                 if (n.name.length >= 4 && n.name.length <= 10) n.score++;
-                const syllables = getSylableCount(n.name);
+                const syllables = getSyllableCount(n.name);
                 if (syllables >= 2 && syllables <= 3) n.score++;
                 if (/^[a-zA-Z]+$/.test(n.name)) n.score++;
                 if (n.meaning && n.meaning.length > 5) n.score++;
