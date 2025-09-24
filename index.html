@@ -131,8 +131,6 @@ Generate a list of 10 unique, unisex names based on the user's request.
 - Names must be poetic, pronounceable, and culturally respectful.
 - If context (surname, siblings) is provided, ensure names harmonize with it.
 - **Roots explanation must be brief (1-2 sentences max).**
-**USER REQUEST:**
-${taskPrompt}
 **OUTPUT CONSTRAINTS:**
 - **Strict JSON Array:** Your entire response must be ONLY a valid JSON array of objects (e.g., [{"name": "...", "roots": "...", "meaning": "..."}, ...]).
 - **Object Keys:** Each object must contain "name", "roots", and "meaning".
@@ -157,29 +155,54 @@ ${taskPrompt}
             const decoder = new TextDecoder();
             let buffer = "";
 
+            // Robustly finds and parses a single complete JSON object from the start of a string.
+            function extractNextObject(str) {
+                let braceCount = 0;
+                let startIndex = str.indexOf('{');
+                if (startIndex === -1) return { object: null, remainder: str };
+
+                for (let i = startIndex; i < str.length; i++) {
+                    if (str[i] === '{') {
+                        braceCount++;
+                    } else if (str[i] === '}') {
+                        braceCount--;
+                    }
+                    // When braceCount is zero, we have a complete object.
+                    if (braceCount === 0 && i > startIndex) {
+                        const objString = str.substring(startIndex, i + 1);
+                        try {
+                            const parsed = JSON.parse(objString);
+                            // Return the parsed object and the rest of the string for the next iteration.
+                            return { object: parsed, remainder: str.substring(i + 1) };
+                        } catch (e) {
+                            // This part of the string is not valid JSON, which is unexpected.
+                            // We will discard it and continue searching from the next character.
+                            console.warn("Discarding invalid JSON object: ", objString);
+                            return { object: null, remainder: str.substring(i + 1) };
+                        }
+                    }
+                }
+                // No complete object was found in the string.
+                return { object: null, remainder: str };
+            }
+
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
                 
+                // Add the new chunk of data to our buffer.
                 buffer += decoder.decode(value, { stream: true });
 
-                // Process buffer to find complete JSON objects
-                let startBracket = buffer.indexOf('{');
-                let endBracket = buffer.indexOf('}');
-
-                while (startBracket !== -1 && endBracket !== -1 && endBracket > startBracket) {
-                    const potentialJson = buffer.substring(startBracket, endBracket + 1);
-                    try {
-                        const parsed = JSON.parse(potentialJson);
-                        if(parsed.name && parsed.meaning && parsed.roots) {
-                           onNameReceived(parsed);
-                        }
-                        buffer = buffer.substring(endBracket + 1);
-                        startBracket = buffer.indexOf('{');
-                        endBracket = buffer.indexOf('}');
-                    } catch (e) {
-                        // Incomplete JSON object, wait for more chunks
-                        endBracket = buffer.indexOf('}', endBracket + 1);
+                // Process the buffer to find as many complete objects as we can.
+                let process = true;
+                while(process) {
+                    const result = extractNextObject(buffer);
+                    if (result.object) {
+                        onNameReceived(result.object);
+                        buffer = result.remainder; // Continue processing with the rest of the buffer.
+                    } else {
+                        // No more complete objects in the buffer, wait for the next chunk of data.
+                        process = false;
                     }
                 }
             }
@@ -226,11 +249,11 @@ ${taskPrompt}
             const floatingButtons = document.createElement('div');
             floatingButtons.className = 'fixed bottom-4 right-4 z-10 flex flex-col items-end gap-3';
             floatingButtons.innerHTML = `
-                <button id="generate-btn" data-action="generateFirstNames" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-full shadow-lg flex items-center gap-2 min-h-12 min-w-12 justify-center" ${appState.isLoading ? 'disabled' : ''}>
+                <button id="generate-btn" data-action="generateFirstNames" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-full shadow-lg flex items-center gap-2 min-h-12 min-w-12 justify-center disabled:opacity-50" ${appState.isLoading ? 'disabled' : ''}>
                     ${appState.isLoading ? '<svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>' : '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>'}
                     <span class="hidden sm:inline">${appState.isLoading ? 'Generating...' : (appState.likedNames.length > 0 ? 'Riff on Liked' : 'First Names')}</span>
                 </button>
-                <button data-action="suggestMiddleNames" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-3 rounded-full shadow-lg flex items-center gap-2" ${appState.isLoading ? 'disabled' : ''}>
+                <button data-action="suggestMiddleNames" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-3 rounded-full shadow-lg flex items-center gap-2 disabled:opacity-50" ${appState.isLoading ? 'disabled' : ''}>
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"></path></svg>
                     <span class="hidden sm:inline">Middle Names</span>
                 </button>
