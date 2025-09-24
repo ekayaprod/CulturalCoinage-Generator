@@ -17,19 +17,26 @@
     .chip.active { background: linear-gradient(90deg,#294e86,#2b6fb3); color:white; box-shadow:0 6px 18px rgba(41,78,134,0.14) }
     .spinner{ border:4px solid rgba(255,255,255,0.06); border-top-color:#60a5fa; border-radius:999px; width:36px; height:36px; animation:spin 0.9s linear infinite } @keyframes spin{ to{transform:rotate(360deg)} }
     a.debug { color:#8fb6ff; text-decoration:underline }
+    .debug-panel { max-height: 200px; overflow-y: auto; }
   </style>
 </head>
 <body>
   <div id="app" class="min-h-screen p-6"></div>
 
   <script>
-/**
- * Cultural Coinage Generator — Full-Featured Version
- * Philosophy: Blend linguistic roots (e.g., Turkish, Nordic) with themes (cosmic, nature)
- * to create evocative, pronounceable, and culturally respectful names.
- */
-
 (function () {
+  // Philosophy for LLMs
+  const PHILOSOPHY = `
+  CULTURAL COINAGE GENERATOR
+
+  Names are artifacts, not random strings.
+  Blend cultural morphemes, syllables, and phonetic textures into poetic,
+  pronounceable names that are culturally respectful.
+
+  North Star: Treat this tool as a craft workshop, not just a generator.
+  All contributors and LLMs must preserve this intent.
+  `;
+
   // --- CONFIG ---
   const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
   const DEFAULT_COUNT = 6;
@@ -37,6 +44,7 @@
   const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music", "Fire", "Mountain", "Ocean", "Sky", "Forest", "Mythic"];
   const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant", "Elegant & Refined", "Grounded & Earthy", "Mystical & Ethereal"];
   const SYSTEM_BLACKLIST = ["tuna","ilay","baran","nur","solren","kuzel","anal"];
+  const MORPHEME_DICTIONARY = { sol: "Latin, sun", ren: "Japanese, lotus", dra: "Greek, serpent", astro: "Greek, star", luna: "Latin, moon" };
 
   // --- State ---
   const appState = {
@@ -48,10 +56,15 @@
     selectedLanguages: ["Celtic", "Sanskrit"],
     selectedThemes: ["Light","Balance"],
     selectedStyle: "Lyrical & Melodic",
+    gender: "Unisex",
     surname: "",
     siblingNames: "",
     firstNameForMiddle: "",
     userLanguages: [],
+    userBlacklist: [],
+    rawApiResponse: null,
+    sessionGeneratedNames: [],
+    sortOrder: "generated",
   };
   
   // --- UI Element Cache ---
@@ -76,6 +89,8 @@
             surname: appState.surname,
             siblingNames: appState.siblingNames,
             firstNameForMiddle: appState.firstNameForMiddle,
+            userBlacklist: appState.userBlacklist,
+            gender: appState.gender,
         };
         localStorage.setItem('culturalCoinageState', JSON.stringify(stateToSave));
     } catch (e) { console.warn("Could not save state to localStorage:", e); }
@@ -86,7 +101,8 @@
         const saved = localStorage.getItem('culturalCoinageState');
         if (saved) {
             const parsed = JSON.parse(saved);
-            Object.assign(appState, { ...parsed, likedNames: parsed.likedNames || [], userLanguages: parsed.userLanguages || [] });
+            const defaults = { likedNames: [], userLanguages: [], userBlacklist: [], gender: "Unisex" };
+            Object.assign(appState, { ...defaults, ...parsed });
         }
       } catch (e) { console.warn("Could not load state from localStorage:", e); }
   }
@@ -94,41 +110,69 @@
   function parseApiResponse(text) {
     if (!text) return [];
 
-    let cleanedText = text.replace(/```[\s\S]*?```/g, '');
-    const firstBracket = cleanedText.search(/[\[\{]/);
-    if (firstBracket > 0) cleanedText = cleanedText.slice(firstBracket);
-    const lastBracket = Math.max(cleanedText.lastIndexOf(']'), cleanedText.lastIndexOf('}'));
-    if (lastBracket !== -1) cleanedText = cleanedText.slice(0, lastBracket + 1);
-    cleanedText = cleanedText.trim();
+    // Strip code fences if present
+    let cleanedText = text.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
 
-    if (!cleanedText) return [];
-
+    // Try parsing as JSON
     try {
-        const parsed = JSON.parse(cleanedText);
-        if (Array.isArray(parsed)) return parsed;
+      const parsed = JSON.parse(cleanedText);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed.names && Array.isArray(parsed.names)) return parsed.names;
+      if (typeof parsed === "object") return Object.values(parsed).flat();
     } catch (e) {
-        console.warn("JSON parsing failed, falling back to regex extraction.", e);
+      console.warn("Strict JSON parse failed. Falling back to regex.", e);
     }
 
-    const results = [];
-    const entries = text.split(/"name"\s*:/).slice(1);
-    for (const entry of entries) {
-        const nameMatch = entry.match(/^\s*"([^"]+)"/);
-        const meaningMatch = entry.match(/"meaning"\s*:\s*"([^"]+)"/);
-        const rootsMatch = entry.match(/"roots"\s*:\s*"([^"]*)"/);
-        if (nameMatch?.[1]) {
-            results.push({ name: nameMatch[1].trim(), meaning: meaningMatch?.[1].trim() || "", roots: rootsMatch?.[1].trim() || "" });
-        }
-    }
-    return results;
+    // Fallback regex extraction
+    const matches = [...cleanedText.matchAll(/"name"\s*:\s*"([^"]+)"/g)];
+    return matches.map(m => ({ name: m[1], meaning: "", roots: "", cluster: "" }));
   }
 
-  function filterAndSort(rawArray) {
+  function processApiResponse(rawArray) {
     if (!rawArray?.length) return [];
-    return rawArray
-        .map(it => ({ name: (it.name || "").toString().trim(), meaning: (it.meaning || "").toString().trim(), roots: (it.roots || "").toString().trim() }))
-        .filter(candidate => candidate.name)
-        .sort((a,b) => a.name.localeCompare(b.name));
+    const fullBlacklist = [...SYSTEM_BLACKLIST, ...appState.userBlacklist.map(b=>b.toLowerCase())];
+
+    return rawArray.map(it => {
+        let name = (it.name || "").toString().trim();
+        let meaning = (it.meaning || "").toString().trim();
+        let roots = (it.roots || "").toString().trim();
+        let cluster = (it.cluster || "").toString().trim();
+
+        // Substring blacklist check
+        if (fullBlacklist.some(b => name.toLowerCase().includes(b))) return null;
+
+        // Enrich meaning if too short
+        if (meaning && meaning.split(' ').length < 3) {
+            meaning += ` — a name that feels ${cluster.toLowerCase().split('&')[0].trim()} and expansive.`;
+        }
+
+        // Enrich roots if shallow
+        if (roots && !roots.includes('+')) {
+            for (const [key, value] of Object.entries(MORPHEME_DICTIONARY)) {
+                if (name.toLowerCase().includes(key) && !roots.toLowerCase().includes(key)) {
+                    roots += ` + ${value}`;
+                }
+            }
+        }
+        
+        // Fallback for cluster
+        if (!cluster) {
+            const vowels = (name.toLowerCase().match(/[aeiouy]/g) || []).length;
+            const consonants = (name.toLowerCase().match(/[bcdfghjklmnpqrstvwxz]/g) || []).length;
+            if (Object.keys(MORPHEME_DICTIONARY).some(m => name.toLowerCase().includes(m))) {
+                cluster = "Mythic & Cosmic";
+            } else if (vowels > consonants) {
+                cluster = "Airy & Flowing";
+            } else {
+                cluster = "Strong & Grounded";
+            }
+        }
+        
+        return {
+            name, meaning, roots, cluster,
+            confidence: parseFloat(it.confidence) || 0.7,
+        };
+    }).filter(Boolean); // Filter out nulls from blacklist
   }
 
   // --- UI Update Functions ---
@@ -138,12 +182,32 @@
           ui.results.panel.innerHTML = '<div class="flex items-center justify-center py-8"><div class="spinner"></div></div>';
       } else if (appState.error) {
           ui.results.panel.innerHTML = `<div class="bg-[#2b1a1a] border border-[#5b2626] rounded p-4"><div class="text-red-300 font-semibold">Error</div><div class="small-muted mt-2">${escapeHtml(appState.error)}</div></div>`;
+          updateDebugViewer();
       } else if (!appState.results.length) {
           ui.results.panel.innerHTML = '<div class="flex-1 flex items-center justify-center small-muted h-full">No names yet — click Generate.</div>';
+          updateDebugViewer();
       } else {
-          const grid = el('div','grid grid-cols-1 sm:grid-cols-2 gap-4');
-          appState.results.forEach(item => grid.append(createNameCard(item)));
-          ui.results.panel.append(grid);
+          let sortedResults = [...appState.results];
+          if (appState.sortOrder === 'alphabetical') {
+              sortedResults.sort((a, b) => a.name.localeCompare(b.name));
+          } else if (appState.sortOrder === 'cluster') {
+              sortedResults.sort((a, b) => a.cluster.localeCompare(b.cluster) || a.name.localeCompare(b.name));
+          }
+
+          const clusters = sortedResults.reduce((acc, item) => {
+              (acc[item.cluster] = acc[item.cluster] || []).push(item);
+              return acc;
+          }, {});
+
+          Object.keys(clusters).sort().forEach(clusterName => {
+              const clusterTitle = el('h3', 'text-md font-semibold text-blue-300 mt-4 first:mt-0');
+              clusterTitle.textContent = clusterName;
+              ui.results.panel.append(clusterTitle);
+              
+              const grid = el('div','grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2');
+              clusters[clusterName].forEach(item => grid.append(createNameCard(item)));
+              ui.results.panel.append(grid);
+          });
       }
   }
   
@@ -151,6 +215,7 @@
     updateChipSelector(ui.controls.languageChips, [...new Set([...LANG_OPTIONS, ...appState.userLanguages])]);
     updateChipSelector(ui.controls.themeChips, THEME_OPTIONS);
     updateLikedNamesSection();
+    updateUserBlacklist();
     ui.controls.generateButton.textContent = appState.likedNames.length > 0 ? 'Riff on Liked' : 'Generate Names';
   }
 
@@ -158,33 +223,45 @@
       container.innerHTML = '';
       const stateKey = container.dataset.stateKey;
       options.forEach(opt => {
-          const c = el('button', 'chip');
-          c.textContent = opt;
-          c.dataset.option = opt;
+          const c = el('button', 'chip'); c.textContent = opt; c.dataset.option = opt;
           if (appState[stateKey].includes(opt)) c.classList.add('active');
           container.append(c);
       });
   }
   
+  function updateUserBlacklist() {
+      ui.controls.blacklistChips.innerHTML = '';
+      appState.userBlacklist.forEach(word => {
+          const chip = el('div', 'chip flex items-center gap-2');
+          chip.innerHTML = `<span>${word}</span><button class="font-mono text-xs opacity-70" data-action="remove-blacklist" data-word="${word}">x</button>`;
+          ui.controls.blacklistChips.append(chip);
+      });
+  }
+
   function updateLikedNamesSection() {
       ui.controls.likedNamesContainer.innerHTML = '';
       if (appState.likedNames.length > 0) {
-        const label = el('label', 'text-sm font-medium');
-        label.textContent = 'Liked Names (Inspiration)';
+        const label = el('label', 'text-sm font-medium'); label.textContent = 'Liked Names (Inspiration)';
         const wrap = el('div', 'flex flex-wrap gap-2 mt-1');
         appState.likedNames.forEach(nameObj => {
             const chip = el('div', 'chip active flex items-center gap-2');
-            const nameSpan = el('span');
-            nameSpan.textContent = nameObj.name;
-            const removeBtn = el('button', 'font-mono text-xs opacity-70');
-            removeBtn.textContent = 'x';
-            removeBtn.dataset.action = 'remove-liked';
-            removeBtn.dataset.name = nameObj.name;
-            chip.append(nameSpan, removeBtn);
+            chip.innerHTML = `<span>${nameObj.name}</span><button class="font-mono text-xs opacity-70" data-action="remove-liked" data-name="${nameObj.name}">x</button>`;
             wrap.append(chip);
         });
         ui.controls.likedNamesContainer.append(label, wrap);
       }
+  }
+
+  function updateDebugViewer() {
+    ui.debug.container.innerHTML = '';
+    if (appState.rawApiResponse) {
+      const details = el('details', 'mt-4');
+      details.innerHTML = `<summary class="cursor-pointer text-sm small-muted">Show Raw Model Output</summary>
+      <pre class="debug-panel bg-[#0b1622] border border-[#223447] rounded p-2 text-xs mt-2 whitespace-pre-wrap"></pre>
+      <button class="chip mt-2" data-action="copy-debug">Copy Debug JSON</button>`;
+      details.querySelector('pre').textContent = appState.rawApiResponse;
+      ui.debug.container.append(details);
+    }
   }
 
   // --- UI Creation ---
@@ -192,88 +269,112 @@
       const isLiked = appState.likedNames.some(n => n.name === item.name);
       const card = el('div','bg-[#081426] border border-[#123047] rounded p-4 flex flex-col gap-2 fade');
       
-      const header = el('div', 'flex items-start gap-2');
+      const header = el('div', 'flex items-start justify-between gap-2');
       const nameEl = el('div', 'text-xl font-semibold'); nameEl.textContent = item.name;
       header.append(nameEl);
 
       const meaningEl = el('div', 'italic small-muted'); meaningEl.textContent = item.meaning || '—';
+      
       const rootsEl = el('div', 'text-xs mt-auto small-muted');
-      const rootsLabel = el('strong'); rootsLabel.textContent = 'Roots: ';
-      rootsEl.append(rootsLabel, document.createTextNode(item.roots || '—'));
+      const strongTag = el('strong');
+      strongTag.textContent = 'Roots: ';
+      rootsEl.append(strongTag, document.createTextNode(item.roots || '—'));
       
-      const actions = el('div', 'flex gap-2 mt-2');
-      const copyBtn = el('button', 'chip'); copyBtn.textContent = 'Copy'; copyBtn.dataset.action = 'copy-name'; copyBtn.dataset.name = item.name;
-      const likeBtn = el('button', `chip ${isLiked ? 'active' : ''}`); likeBtn.innerHTML = `&hearts; Like`; likeBtn.dataset.action = 'like-name'; likeBtn.dataset.name = item.name;
+      const actions = el('div', 'flex flex-wrap gap-2 mt-2');
+      const copyBtn = el('button', 'chip');
+      copyBtn.dataset.action = 'copy-name';
+      copyBtn.dataset.name = item.name;
+      copyBtn.textContent = 'Copy';
+
+      const likeBtn = el('button', `chip ${isLiked ? 'active' : ''}`);
+      likeBtn.dataset.action = 'like-name';
+      likeBtn.dataset.name = item.name;
+      likeBtn.innerHTML = '&hearts; Like'; // Using innerHTML for the heart entity is safe and standard practice.
+
+      const variantsBtn = el('button', 'chip');
+      variantsBtn.dataset.action = 'variants';
+      variantsBtn.dataset.name = item.name;
+      variantsBtn.textContent = 'Variants';
       
-      actions.append(copyBtn, likeBtn);
+      actions.append(copyBtn, likeBtn, variantsBtn);
+      
       card.append(header, meaningEl, rootsEl, actions);
       return card;
   }
   
   function createContextInput(placeholder, stateKey, className = '') {
     const input = el('input', `w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm ${className}`);
-    input.placeholder = placeholder;
-    input.value = appState[stateKey];
-    input.addEventListener('change', e => {
-        appState[stateKey] = e.target.value.trim();
-        saveState();
-    });
+    input.placeholder = placeholder; input.value = appState[stateKey];
+    input.addEventListener('change', e => { appState[stateKey] = e.target.value.trim(); saveState(); });
     return input;
   }
 
+  function createAddButton(clickHandler) {
+    const btn = el('button', 'bg-[#0e2436] border border-[#1b3146] px-3 py-2 rounded text-sm small-muted');
+    btn.textContent = 'Add';
+    btn.addEventListener('click', clickHandler);
+    return btn;
+  }
+
   // --- Event Handlers ---
-  function handleChipClick(event) {
-      const chip = event.target.closest('.chip');
-      if (!chip) return;
-      
-      const option = chip.dataset.option;
-      const stateKey = chip.parentElement.dataset.stateKey;
-      const max = stateKey === 'selectedLanguages' ? 3 : 2;
-      const stateArray = appState[stateKey];
-
-      if (stateArray.includes(option)) {
-          appState[stateKey] = stateArray.filter(x => x !== option);
-      } else {
-          appState[stateKey] = [...stateArray, option].slice(-max);
+  function handleControlsClick(event) {
+      const chip = event.target.closest('.chip[data-option]');
+      if (chip) {
+          const option = chip.dataset.option;
+          const stateKey = chip.parentElement.dataset.stateKey;
+          const max = stateKey === 'selectedLanguages' ? 3 : 2;
+          appState[stateKey] = appState[stateKey].includes(option)
+              ? appState[stateKey].filter(x => x !== option)
+              : [...appState[stateKey], option].slice(-max);
+          saveState();
+          updateControls();
+          return;
       }
-      saveState();
-      updateControls();
-  }
-  
-  function handleLikedNamesClick(event) {
-      const removeBtn = event.target.closest('[data-action="remove-liked"]');
-      if (!removeBtn) return;
 
-      const nameToRemove = removeBtn.dataset.name;
-      appState.likedNames = appState.likedNames.filter(n => n.name !== nameToRemove);
-      saveState();
-      updateControls();
-      updateResultsPanel();
-  }
-  
-  function handleResultsPanelClick(event) {
-      const copyBtn = event.target.closest('[data-action="copy-name"]');
-      if (copyBtn) {
-          navigator.clipboard.writeText(copyBtn.dataset.name);
-          showToast('Copied!');
+      const removeLikedBtn = event.target.closest('[data-action="remove-liked"]');
+      if (removeLikedBtn) {
+          appState.likedNames = appState.likedNames.filter(n => n.name !== removeLikedBtn.dataset.name);
+          saveState();
+          updateControls();
+          updateResultsPanel();
           return;
       }
       
-      const likeBtn = event.target.closest('[data-action="like-name"]');
-      if (likeBtn) {
-          const name = likeBtn.dataset.name;
+      const removeBlacklistBtn = event.target.closest('[data-action="remove-blacklist"]');
+      if(removeBlacklistBtn) {
+          appState.userBlacklist = appState.userBlacklist.filter(w => w !== removeBlacklistBtn.dataset.word);
+          saveState();
+          updateUserBlacklist();
+      }
+  }
+  
+  function handleResultsPanelClick(event) {
+      const btn = event.target.closest('button[data-action]');
+      if (!btn) return;
+      const { action, name } = btn.dataset;
+      
+      if (action === 'copy-name') {
+          navigator.clipboard.writeText(name);
+          showToast('Copied!');
+      } else if (action === 'like-name') {
           const isLiked = appState.likedNames.some(n => n.name === name);
-
           if (isLiked) {
               appState.likedNames = appState.likedNames.filter(n => n.name !== name);
+              showToast('Unliked!');
           } else {
               const nameObj = appState.results.find(r => r.name === name);
               if (nameObj) appState.likedNames.push(nameObj);
+              showToast('Liked!');
           }
           saveState();
-          likeBtn.classList.toggle('active');
+          btn.classList.toggle('active');
           updateLikedNamesSection();
           ui.controls.generateButton.textContent = appState.likedNames.length > 0 ? 'Riff on Liked' : 'Generate Names';
+      } else if (action === 'variants') {
+          doGenerate('variants', name);
+      } else if (action === 'copy-debug') {
+          navigator.clipboard.writeText(appState.rawApiResponse);
+          showToast('Copied Debug Info!');
       }
   }
 
@@ -283,7 +384,6 @@
     const left = el('div','md-col-span-1 bg-[#071425] border border-[#0e2334] rounded-xl p-5 flex flex-col gap-4 h-fit');
     left.innerHTML = `<h1 class="text-xl font-semibold">Cultural Coinage</h1><div class="small-muted mt-1">Blend culture, sound & meaning</div>`;
     
-    // API Key
     const apiKeySection = el('div');
     apiKeySection.innerHTML = `<label class="text-sm font-medium">Gemini API Key</label>`;
     const inputKey = el('input','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm mt-1');
@@ -291,17 +391,12 @@
     inputKey.addEventListener('change', e => { appState.apiKey = e.target.value.trim(); saveState(); });
     apiKeySection.append(inputKey);
 
-    // Context
     const contextSection = el('div');
     contextSection.innerHTML = `<label class="text-sm font-medium">Real-World Context (Optional)</label>`;
     const contextGrid = el('div', 'grid grid-cols-2 gap-2 mt-1');
-    const surnameInput = createContextInput("Surname", "surname");
-    const siblingsInput = createContextInput("Sibling Names", "siblingNames");
-    const middleNameInput = createContextInput("First Name (for middle names)", "firstNameForMiddle", "col-span-2");
-    contextGrid.append(surnameInput, siblingsInput, middleNameInput);
+    contextGrid.append(createContextInput("Surname", "surname"), createContextInput("Sibling Names", "siblingNames"), createContextInput("First Name (for middle names)", "firstNameForMiddle", "col-span-2"));
     contextSection.append(contextGrid);
     
-    // Languages (Dynamic Chips)
     const languagesSection = el('div');
     languagesSection.innerHTML = `<label class="text-sm font-medium">Languages (choose 1–3)</label>`;
     ui.controls.languageChips = el('div', 'flex flex-wrap gap-2 mt-1');
@@ -309,69 +404,94 @@
     const addLangWrap = el('div', 'flex gap-2 mt-2');
     const langInput = el('input', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
     langInput.placeholder = 'Add a language...';
-    const addBtn = el('button', 'bg-[#0e2436] border border-[#1b3146] px-3 py-2 rounded text-sm small-muted');
-    addBtn.textContent = 'Add';
-    addBtn.addEventListener('click', () => {
+    const addLangBtn = createAddButton(() => {
         const newLang = langInput.value.trim();
         const allLangs = [...new Set([...LANG_OPTIONS, ...appState.userLanguages])];
         if (newLang && !allLangs.map(l => l.toLowerCase()).includes(newLang.toLowerCase())) {
             appState.userLanguages.push(newLang);
             appState.selectedLanguages = [...appState.selectedLanguages, newLang].slice(-3);
-            saveState();
-            updateControls();
+            saveState(); updateControls();
         }
         langInput.value = '';
     });
-    addLangWrap.append(langInput, addBtn);
+    addLangWrap.append(langInput, addLangBtn);
     languagesSection.append(ui.controls.languageChips, addLangWrap);
 
-    // Themes (Dynamic Chips)
     const themesSection = el('div');
     themesSection.innerHTML = `<label class="text-sm font-medium">Themes (choose 1–2)</label>`;
     ui.controls.themeChips = el('div', 'flex flex-wrap gap-2 mt-1');
     ui.controls.themeChips.dataset.stateKey = 'selectedThemes';
     themesSection.append(ui.controls.themeChips);
 
-    // Style
     const styleSection = el('div');
     styleSection.innerHTML = `<label class="text-sm font-medium">Style</label>`;
     const styleSel = el('select','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm mt-1');
     STYLE_OPTIONS.forEach(s => { const op = el('option'); op.value = s; op.textContent = s; if (appState.selectedStyle === s) op.selected = true; styleSel.append(op); });
     styleSel.addEventListener('change', e => { appState.selectedStyle = e.target.value; saveState(); });
     styleSection.append(styleSel);
+    
+    const genderSection = el('div');
+    genderSection.innerHTML = `<label class="text-sm font-medium">Gender</label>`;
+    const genderSel = el('select','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm mt-1');
+    ["Unisex","Male","Female"].forEach(g => { 
+      const op = el('option'); op.value = g; op.textContent = g; 
+      if (appState.gender === g) op.selected = true; 
+      genderSel.append(op); 
+    });
+    genderSel.addEventListener('change', e => { appState.gender = e.target.value; saveState(); });
+    genderSection.append(genderSel);
 
-    // Liked Names (Dynamic)
+    const blacklistSection = el('div');
+    blacklistSection.innerHTML = `<label class="text-sm font-medium">User Blacklist</label>`;
+    ui.controls.blacklistChips = el('div', 'flex flex-wrap gap-2 mt-1');
+    const addBlacklistWrap = el('div', 'flex gap-2 mt-2');
+    const blacklistInput = el('input', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
+    blacklistInput.placeholder = 'Add a word to blacklist...';
+    const addBlacklistBtn = createAddButton(() => {
+        const newWord = blacklistInput.value.trim().toLowerCase();
+        if (newWord && !appState.userBlacklist.includes(newWord)) {
+            appState.userBlacklist.push(newWord);
+            saveState(); updateUserBlacklist();
+        }
+        blacklistInput.value = '';
+    });
+    addBlacklistWrap.append(blacklistInput, addBlacklistBtn);
+    blacklistSection.append(ui.controls.blacklistChips, addBlacklistWrap);
+
     ui.controls.likedNamesContainer = el('div');
     
-    // Buttons
     const btnWrap = el('div','flex flex-wrap gap-2 mt-2');
     ui.controls.generateButton = el('button','bg-gradient-to-r from-[#3b82f6] to-[#2563eb] text-white px-4 py-2 rounded font-semibold shadow flex-1');
     ui.controls.generateButton.addEventListener('click', () => doGenerate('first'));
-    const middleBtn = el('button','bg-[#1e3a8a] text-white px-4 py-2 rounded font-semibold shadow');
-    middleBtn.textContent = 'Middle Names';
+    const middleBtn = el('button','bg-[#1e3a8a] text-white px-4 py-2 rounded font-semibold shadow'); middleBtn.textContent = 'Middle Names';
     middleBtn.addEventListener('click', () => doGenerate('middle'));
-    const exportBtn = el('button','bg-[#0e2436] border border-[#1b3146] px-3 py-2 rounded text-sm small-muted');
-    exportBtn.textContent = 'Export';
+    const exportBtn = el('button','bg-[#0e2436] border border-[#1b3146] px-3 py-2 rounded text-sm small-muted'); exportBtn.textContent = 'Export';
     exportBtn.addEventListener('click', exportCSV);
-    const clearBtn = el('button','bg-transparent border border-[#233542] px-3 py-2 rounded text-sm small-muted');
-    clearBtn.textContent = 'Clear';
-    clearBtn.addEventListener('click', ()=>{ appState.results=[]; appState.error=null; updateResultsPanel(); });
+    const clearBtn = el('button','bg-transparent border border-[#233542] px-3 py-2 rounded text-sm small-muted'); clearBtn.textContent = 'Clear';
+    clearBtn.addEventListener('click', ()=>{ appState.results=[]; appState.error=null; appState.rawApiResponse=null; appState.sessionGeneratedNames = []; updateResultsPanel(); });
     btnWrap.append(ui.controls.generateButton, middleBtn, exportBtn, clearBtn);
     
-    // Assemble Controls
-    left.append(apiKeySection, contextSection, languagesSection, themesSection, styleSection, ui.controls.likedNamesContainer, btnWrap);
+    const controlsContainer = el('div'); 
+    controlsContainer.append(apiKeySection, contextSection, languagesSection, themesSection, styleSection, genderSection, ui.controls.likedNamesContainer, blacklistSection, btnWrap);
+    left.append(controlsContainer);
 
-    // Results Panel
     const right = el('div','md:col-span-2 bg-[#071427] border border-[#0e2030] rounded-xl p-5 flex flex-col gap-4');
-    right.innerHTML = '<div><h2 class="text-lg font-semibold">Results</h2><div class="small-muted">Poetic, culturally coined names</div></div>';
+    const resultsHeader = el('div', 'flex items-center justify-between');
+    resultsHeader.innerHTML = '<div><h2 class="text-lg font-semibold">Results</h2><div class="small-muted">Poetic, culturally coined names</div></div>';
+    const sortSel = el('select', 'bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
+    sortSel.innerHTML = `<option value="generated">As Generated</option><option value="alphabetical">Alphabetical</option><option value="cluster">By Cluster</option>`;
+    sortSel.addEventListener('change', e => {
+        appState.sortOrder = e.target.value;
+        updateResultsPanel();
+    });
+    resultsHeader.append(sortSel);
+    
     ui.results.panel = el('div','mt-2 p-3 bg-[#071a25] border border-[#0f2a3a] rounded-lg min-h-[280px] flex flex-col');
-    right.append(ui.results.panel);
+    ui.debug = { container: el('div') };
+    right.append(resultsHeader, ui.results.panel, ui.debug.container);
 
-    // Add delegated listeners
-    ui.controls.languageChips.addEventListener('click', handleChipClick);
-    ui.controls.themeChips.addEventListener('click', handleChipClick);
-    ui.controls.likedNamesContainer.addEventListener('click', handleLikedNamesClick);
-    ui.results.panel.addEventListener('click', handleResultsPanelClick);
+    controlsContainer.addEventListener('click', handleControlsClick);
+    right.addEventListener('click', handleResultsPanelClick); // Delegated listener for results panel + debug
     
     appWrap.append(left, right);
     ui.root.append(appWrap);
@@ -379,43 +499,75 @@
 
   function showToast(msg) {
     const t = el('div','fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#0f2a41] px-4 py-2 rounded shadow text-sm fade');
-    t.textContent = msg;
-    document.body.appendChild(t);
+    t.textContent = msg; document.body.appendChild(t);
     setTimeout(()=> t.remove(), 1400);
   }
 
   function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-  function buildSystemPrompt(task) {
-    return `You are the Cultural Coinage Agent: craft short, poetic, pronounceable unisex names by blending the specified language origins and themes. 
-You MUST only use the linguistic origins from the languages specified in the task. Do not use any other languages.
+  function buildSystemPrompt(task, gender, sessionHistory) {
+    const fullBlacklist = [...SYSTEM_BLACKLIST, ...appState.userBlacklist];
+    const sessionMemoryInstruction = sessionHistory.length > 0
+      ? `Avoid repeating or resembling these names: ${sessionHistory.join(', ')}.`
+      : `This is the first generation of this session.`;
 
-Return output as a JSON array of objects (JSON only). Each object MUST have three keys: "name", "meaning", and "roots". 
+    return `
+You are the Cultural Coinage Agent. (See philosophy baked into codebase for guiding intent.)
 
-The "roots" field is crucial: it must explain the word's construction by breaking down its component parts (syllables, linguistic elements) and their original languages. This is about *how the name was built*, not what it means post-construction (that is what the "meaning" field is for).
+MISSION
+- Craft short, poetic, pronounceable ${gender || "unisex"} names from the specified languages.
+- Treat names as cultural artifacts, not random strings.
+- Each generation must be fresh, iterative, and responsive to user refinement.
 
-Names should be 4–10 letters, 2–3 syllables preferred, culturally respectful, and have evocative (poetic) meanings. Task: ${task}`;
+SESSION MEMORY
+${sessionMemoryInstruction}
+Blacklist: ${fullBlacklist.join(", ")} (strictly exclude).
+
+OUTPUT FORMAT
+Return ONLY a raw JSON array of objects.
+Do not wrap in text, markdown, or explanations.
+Each object must include:
+{
+  "name": "string",
+  "meaning": "poetic interpretation",
+  "roots": "morpheme breakdown with origins",
+  "cluster": "stylistic grouping label",
+  "confidence": 0.85
+}
+
+RULES
+1. Use ONLY specified languages; blend harmoniously if multiple.
+2. Name length: 4–10 letters, 2–3 syllables preferred.
+3. Gender:
+   - Unisex → neutral.
+   - Male → consonant-strong, firm endings.
+   - Female → vowel-rich, melodic.
+4. Roots: Always ≥2 fragments, with language + meaning. If invented, describe as “coined fragment”.
+5. Clusters: Always include (e.g., “Airy & Flowing”, “Mythic & Cosmic”).
+6. Style (e.g., “Lyrical & Melodic”) must shape rhythm and sound choices, not just description.
+7. Variants mode: Keep ≥50% phonetic overlap with the source name, but shift thematic resonance.
+8. Harmonize with surname and sibling names if provided.
+
+TASK:
+${task}
+    `;
   }
 
   async function callGeminiOnce(prompt) {
     const key = appState.apiKey.trim();
     if (!key) throw new Error('Missing API key.');
-    const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.6, maxOutputTokens: 800, candidateCount: 1 } };
+    const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.7, maxOutputTokens: 1200, candidateCount: 1 } };
     const res = await fetch(API_BASE_URL + '?key=' + encodeURIComponent(key), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(`Gemini API error ${res.status}: ${await res.text()}`);
     const data = await res.json();
     return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
   }
 
-  async function doGenerate(mode = 'first') {
+  async function doGenerate(mode = 'first', contextName = '') {
     if (!appState.apiKey) {
-        appState.error = "Please enter your Gemini API key to begin.";
-        updateResultsPanel();
-        return;
+        appState.error = "Please enter your Gemini API key to begin."; updateResultsPanel(); return;
     }
-    appState.error = null;
-    appState.results = [];
-    appState.isLoading = true;
+    appState.error = null; appState.results = []; appState.rawApiResponse = null; appState.isLoading = true;
     updateResultsPanel();
 
     let task;
@@ -423,24 +575,32 @@ Names should be 4–10 letters, 2–3 syllables preferred, culturally respectful
     
     if (mode === 'middle') {
         if (!appState.firstNameForMiddle) { appState.error = "Please provide a first name to generate middle names."; appState.isLoading = false; updateResultsPanel(); return; }
-        task = `Generate ${DEFAULT_COUNT} middle names for the first name "${appState.firstNameForMiddle}". Consider themes: ${appState.selectedThemes.join(', ')} and style: ${appState.selectedStyle}.`;
-        if (appState.surname) task += ` The full name should flow well with the surname "${appState.surname}".`;
+        task = `Generate ${DEFAULT_COUNT} middle names for "${appState.firstNameForMiddle}". Consider themes: ${appState.selectedThemes.join(', ')} and style: ${appState.selectedStyle}.`;
+    } else if (mode === 'variants') {
+        task = `Generate ${DEFAULT_COUNT} variants of the name "${contextName}", keeping a similar phonetic and thematic feel. Use languages ${allLangs.join(', ')}.`;
     } else if (appState.likedNames.length > 0) {
         const likedStr = appState.likedNames.map(n => n.name).join(', ');
         task = `Analyze these liked names: ${likedStr}. Generate ${DEFAULT_COUNT} new names in a similar style, using themes of ${appState.selectedThemes.join(', ')}.`;
     } else {
         task = `Languages: ${allLangs.join(', ')} | Themes: ${appState.selectedThemes.join(', ')} | Style: ${appState.selectedStyle} | Return ${DEFAULT_COUNT} names.`;
     }
-    if (mode === 'first' && appState.siblingNames) task += ` Keep stylistically compatible with siblings: ${appState.siblingNames}.`;
-    if (mode === 'first' && appState.surname) task += ` Harmonize with surname: ${appState.surname}.`;
+    if (appState.siblingNames) task += ` Keep stylistically compatible with siblings: ${appState.siblingNames}.`;
+    if (appState.surname) task += ` Harmonize with surname: ${appState.surname}.`;
     
-    const prompt = buildSystemPrompt(task);
+    let prompt = buildSystemPrompt(task, appState.gender, appState.sessionGeneratedNames);
     try {
         const raw = await callGeminiOnce(prompt);
-        let parsed = parseApiResponse(raw);
-        appState.results = filterAndSort(parsed);
+        appState.rawApiResponse = raw; // Always save raw response for debugging
+        const parsed = parseApiResponse(raw);
+        
+        const processed = processApiResponse(parsed);
+        if (processed.length) {
+            appState.sessionGeneratedNames.push(...processed.map(p => p.name));
+        }
+
+        appState.results = processed;
         if (!appState.results.length) {
-            appState.error = "No suitable names generated. You can try adjusting your selections.";
+            appState.error = "No names could be parsed from the model output. Raw response saved below for debugging.";
         }
     } catch (err) {
       console.error('Generation error:', err);
@@ -453,8 +613,8 @@ Names should be 4–10 letters, 2–3 syllables preferred, culturally respectful
 
   function exportCSV() {
     if (!appState.results.length) { showToast('No results'); return; }
-    const header = ['Name','Meaning','Roots'];
-    const rows = appState.results.map(r => [`"${r.name.replace(/"/g,'""')}"`,`"${(r.meaning||'').replace(/"/g,'""')}"`,`"${(r.roots||'').replace(/"/g,'""')}"`].join(','));
+    const header = ['Name','Meaning','Roots','Cluster','Confidence'];
+    const rows = appState.results.map(r => [`"${r.name.replace(/"/g,'""')}"`,`"${(r.meaning||'').replace(/"/g,'""')}"`,`"${(r.roots||'').replace(/"/g,'""')}"`, `"${r.cluster.replace(/"/g,'""')}"`, r.confidence].join(','));
     const csv = [header.join(','), ...rows].join('\r\n');
     const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
     const url = URL.createObjectURL(blob);
