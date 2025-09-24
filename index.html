@@ -61,7 +61,7 @@
     <div id="root" class="bg-gray-900 w-full min-h-screen flex flex-col"></div>
     <script>
         /**
-         * Cultural Coinage Generator - Streaming & Performance Optimized
+         * Cultural Coinage Generator - Streaming Repaired
          */
 
         //--- CONFIGURATION & DATA ---
@@ -145,69 +145,115 @@ Generate a list of 10 unique, unisex names based on the user's request.
             const response = await fetch(`${API_BASE_URL}?key=${appState.apiKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                body: JSON.stringify({ 
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { temperature: 0.9, maxOutputTokens: 2048 }
+                })
             });
 
-            if (!response.ok) throw new Error(`API Error: ${response.status}`);
-            if (!response.body) throw new Error("Streaming response not available.");
-
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`API Error ${response.status}: ${errorText}`);
+            }
+            
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
-            let buffer = "";
-
-            // Robustly finds and parses a single complete JSON object from the start of a string.
-            function extractNextObject(str) {
-                let braceCount = 0;
-                let startIndex = str.indexOf('{');
-                if (startIndex === -1) return { object: null, remainder: str };
-
-                for (let i = startIndex; i < str.length; i++) {
-                    if (str[i] === '{') {
-                        braceCount++;
-                    } else if (str[i] === '}') {
-                        braceCount--;
-                    }
-                    // When braceCount is zero, we have a complete object.
-                    if (braceCount === 0 && i > startIndex) {
-                        const objString = str.substring(startIndex, i + 1);
-                        try {
-                            const parsed = JSON.parse(objString);
-                            // Return the parsed object and the rest of the string for the next iteration.
-                            return { object: parsed, remainder: str.substring(i + 1) };
-                        } catch (e) {
-                            // This part of the string is not valid JSON, which is unexpected.
-                            // We will discard it and continue searching from the next character.
-                            console.warn("Discarding invalid JSON object: ", objString);
-                            return { object: null, remainder: str.substring(i + 1) };
-                        }
-                    }
-                }
-                // No complete object was found in the string.
-                return { object: null, remainder: str };
-            }
+            let completeResponse = "";
+            let receivedNames = new Set(); // To avoid duplicate processing
 
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
                 
-                // Add the new chunk of data to our buffer.
-                buffer += decoder.decode(value, { stream: true });
-
-                // Process the buffer to find as many complete objects as we can.
-                let process = true;
-                while(process) {
-                    const result = extractNextObject(buffer);
-                    if (result.object) {
-                        onNameReceived(result.object);
-                        buffer = result.remainder; // Continue processing with the rest of the buffer.
-                    } else {
-                        // No more complete objects in the buffer, wait for the next chunk of data.
-                        process = false;
+                const chunk = decoder.decode(value, { stream: true });
+                const lines = chunk.split('\n');
+                
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const jsonStr = line.slice(6).trim();
+                            if (jsonStr === '[DONE]') continue;
+                            
+                            const data = JSON.parse(jsonStr);
+                            if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
+                                completeResponse += data.candidates[0].content.parts[0].text;
+                                
+                                try {
+                                    let cleanResponse = completeResponse.trim();
+                                    if (cleanResponse.startsWith('```json')) {
+                                        cleanResponse = cleanResponse.replace(/```json\s*/, '').replace(/```\s*$/, '');
+                                    }
+                                    
+                                    const names = JSON.parse(cleanResponse);
+                                    if (Array.isArray(names)) {
+                                        names.forEach(nameObj => {
+                                            if (nameObj.name && nameObj.meaning && nameObj.roots && !receivedNames.has(nameObj.name)) {
+                                                onNameReceived(nameObj);
+                                                receivedNames.add(nameObj.name);
+                                            }
+                                        });
+                                    }
+                                } catch {
+                                    // Not complete JSON yet, continue accumulating
+                                }
+                            }
+                        } catch (parseError) {
+                            console.warn('Failed to parse chunk:', parseError);
+                        }
                     }
+                }
+            }
+            
+            // Final attempt to parse if streaming ended without a complete set
+            if (completeResponse.trim() && receivedNames.size === 0) {
+                try {
+                    let cleanResponse = completeResponse.trim();
+                    if (cleanResponse.startsWith('```json')) {
+                        cleanResponse = cleanResponse.replace(/```json\s*/, '').replace(/```\s*$/, '');
+                    }
+                    const names = JSON.parse(cleanResponse);
+                    if (Array.isArray(names)) {
+                        names.forEach(nameObj => {
+                            if (nameObj.name && nameObj.meaning && nameObj.roots && !receivedNames.has(nameObj.name)) {
+                                onNameReceived(nameObj);
+                                receivedNames.add(nameObj.name);
+                            }
+                        });
+                    }
+                } catch (finalError) {
+                    throw new Error(`Could not parse final response: ${finalError.message}`);
                 }
             }
         }
         
+        async function callGeminiFallback(prompt) {
+            const fallbackUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+            
+            const response = await fetch(`${fallbackUrl}?key=${appState.apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { temperature: 0.9, maxOutputTokens: 2048 }
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Fallback API Error ${response.status}: ${await response.text()}`);
+            }
+            
+            const data = await response.json();
+            let text = data.candidates[0].content.parts[0].text.trim();
+            
+            // Clean markdown formatting
+            if (text.startsWith('```json')) {
+                text = text.replace(/```json\s*/, '').replace(/```\s*$/, '');
+            }
+            
+            const names = JSON.parse(text);
+            return Array.isArray(names) ? names : [];
+        }
+
         function getSyllableCount(word) {
             word = word.toLowerCase();
             if (word.length <= 3) return 1;
@@ -250,7 +296,7 @@ Generate a list of 10 unique, unisex names based on the user's request.
             floatingButtons.className = 'fixed bottom-4 right-4 z-10 flex flex-col items-end gap-3';
             floatingButtons.innerHTML = `
                 <button id="generate-btn" data-action="generateFirstNames" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-full shadow-lg flex items-center gap-2 min-h-12 min-w-12 justify-center disabled:opacity-50" ${appState.isLoading ? 'disabled' : ''}>
-                    ${appState.isLoading ? '<svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>' : '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>'}
+                    ${appState.isLoading ? '<svg class="animate-spin h-5 w-5 text-white" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>' : '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>'}
                     <span class="hidden sm:inline">${appState.isLoading ? 'Generating...' : (appState.likedNames.length > 0 ? 'Riff on Liked' : 'First Names')}</span>
                 </button>
                 <button data-action="suggestMiddleNames" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-3 rounded-full shadow-lg flex items-center gap-2 disabled:opacity-50" ${appState.isLoading ? 'disabled' : ''}>
@@ -495,7 +541,6 @@ Generate a list of 10 unique, unisex names based on the user's request.
                 [...appState.likedNames, nameObject];
             saveState();
             
-            // Re-render the whole app to update like buttons and generate button text
             render();
         }
 
@@ -504,7 +549,7 @@ Generate a list of 10 unique, unisex names based on the user's request.
             appState.error = null;
             appState.results = [];
             appState.generatedPrompt = null;
-            render(); // Re-render to show loading state and disable buttons
+            render(); 
 
             const prompt = createSystemPrompt(task);
             if (!appState.apiKey) {
@@ -518,22 +563,33 @@ Generate a list of 10 unique, unisex names based on the user's request.
 
             try {
                 await callGeminiAPIStream(prompt, (newName) => {
-                    const filtered = !blacklist.some(b => newName.name.toLowerCase().includes(b));
+                    const filtered = !blacklist.some(b => newName.name.toLowerCase().includes(b.toLowerCase()));
                     if(filtered) {
                         newName.score = scoreName(newName);
                         appState.results.push(newName);
                         grid.appendChild(createNameCard(newName));
                     }
                 });
-            } catch (e) {
-                if (e instanceof TypeError) {
-                     appState.error = "Network Error. Check the browser console (F12) for CORS issues and ensure your API key has no HTTP referrer restrictions.";
-                } else {
-                    appState.error = e.message;
+            } catch (streamError) {
+                console.warn('Streaming failed, using fallback:', streamError);
+                try {
+                    const names = await callGeminiFallback(prompt);
+                    // Clear any partial results from failed stream
+                    grid.innerHTML = ''; 
+                    appState.results = [];
+                    names.forEach(newName => {
+                        const filtered = !blacklist.some(b => newName.name.toLowerCase().includes(b.toLowerCase()));
+                        if(filtered) {
+                            newName.score = scoreName(newName);
+                            appState.results.push(newName);
+                            grid.appendChild(createNameCard(newName));
+                        }
+                    });
+                } catch (fallbackError) {
+                    appState.error = `Both streaming and fallback failed. Check API key and network. ${fallbackError.message}`;
                 }
             } finally {
                 appState.isLoading = false;
-                // Final re-render to re-enable buttons and sort results by score
                 appState.results.sort((a,b) => b.score - a.score);
                 render();
             }
