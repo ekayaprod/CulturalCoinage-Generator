@@ -4,36 +4,62 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cultural Coinage Generator</title>
-
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
-
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #111827; color: #d1d5db; margin: 0; padding: 0; }
-        .scrolling-panel::-webkit-scrollbar { width: 8px; }
-        .scrolling-panel::-webkit-scrollbar-track { background: transparent; }
-        .scrolling-panel::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        html,
+        body,
+        #root {
+            height: 100%;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827;
+            color: #d1d5db;
+            margin: 0;
+            padding: 0;
+        }
+
+        .scrolling-panel::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .scrolling-panel::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .scrolling-panel::-webkit-scrollbar-thumb {
+            background: #4b5563;
+            border-radius: 4px;
+        }
+
+        .animate-fade-in {
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
     </style>
 </head>
-
 <body>
-    <div id="root"></div>
-
+    <div id="root" class="bg-gray-900 w-full min-h-screen flex flex-col"></div>
     <script>
         /**
-         * Cultural Coinage Generator
-         *
-         * Philosophy:
-         * This tool generates unisex baby names by fusing cultural and linguistic roots with thematic inspiration.
-         * The agent acts as an expert scholar to provide context-aware, poetic suggestions, learning from user feedback.
+         * Cultural Coinage Generator - Optimized
          */
 
-        // --- CONFIGURATION & DATA ---
+        //--- CONFIGURATION & DATA ---
         const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-preview-05-20:generateContent";
         const themeOptions = ["Nature", "Cosmic", "Balance", "Strength", "Water", "Light", "Shadow", "Music"];
         const styleOptions = ["Lyrical & Melodic", "Archaic & Mythic", "Minimalist & Modern", "Heroic & Resonant"];
@@ -41,18 +67,271 @@
 
         // --- APP STATE ---
         let appState = {
-            apiKey: '',
+            apiKey: "",
             isLoading: false,
             error: null,
             results: [],
             likedNames: [],
+            isControlsOpen: false,
+            showPhilosophy: false,
+            generatedPrompt: null,
             selectedLanguages: ["Celtic", "Sanskrit"],
             selectedThemes: ["Light", "Balance"],
             selectedStyle: "Lyrical & Melodic",
             surname: "",
             siblingNames: "",
-            firstNameForMiddle: "" // New state for middle names
+            firstNameForMiddle: ""
         };
+
+        // --- DOM ELEMENT REFERENCES ---
+        const root = document.getElementById('root');
+
+        // --- LOCAL STORAGE ---
+        function getInitialState(key, defaultValue) {
+            try {
+                const saved = localStorage.getItem(key);
+                return saved ? JSON.parse(saved) : defaultValue;
+            } catch {
+                return defaultValue;
+            }
+        }
+
+        function saveState() {
+            const stateToSave = {
+                apiKey: appState.apiKey,
+                likedNames: appState.likedNames,
+                selectedLanguages: appState.selectedLanguages,
+                selectedThemes: appState.selectedThemes,
+                selectedStyle: appState.selectedStyle,
+                surname: appState.surname,
+                siblingNames: appState.siblingNames,
+                firstNameForMiddle: appState.firstNameForMiddle,
+            };
+            localStorage.setItem('culturalCoinageState', JSON.stringify(stateToSave));
+        }
+
+        function loadStateFromLocalStorage() {
+            const savedState = getInitialState('culturalCoinageState', {});
+            appState = { ...appState, ...savedState };
+        }
+
+        //--- SYSTEM PROMPT GENERATION ---
+        function createSystemPrompt(taskPrompt) {
+            // Unchanged from previous versions
+            return `
+**PERSONA:**
+You are an AI agent with the persona of an Etymological Scholar and Creative Linguist. Your knowledge of the languages selected by the user is deep, nuanced, and authentic. You do not invent meanings; you synthesize them from real linguistic roots.
+**CORE DIRECTIVE:**
+Your goal is to generate a list of 10 unique, unisex names that feel like newly written mythic artifacts-poetic, pronounceable, and culturally respectful.
+**METHODOLOGY:**
+You must follow this creative process:
+1. **Linguistic Deconstruction:** Analyze the phonetic components (morphemes, phonemes, common sounds) of the source languages provided in the task.
+2. **Thematic Synthesis:** Map the requested abstract themes to phonetic qualities. For example, 'Strength' might map to hard consonants (k, t, r), while 'Water' might map to liquid sounds (l, s, sh).
+3. **Creative Recombination:** Thoughtfully combine the deconstructed linguistic elements with the synthesized thematic sounds to coin new, meaningful names. Your "roots" explanation must reflect this thoughtful process.
+4. **Contextual Analysis:** If a surname or sibling names are provided, you MUST analyze them for style and phonetic flow. Your suggestions must harmonize with this context, and you should briefly mention this in the "roots" description (e.g., "...chosen for its soft ending to complement the hard consonant in the surname Jones.").
+**USER TASK:**
+${taskPrompt}
+**OUTPUT CONSTRAINTS:**
+- **Strict JSON Format:** Your entire response must be ONLY a valid JSON array of objects.
+- **Object Structure:** Each object must contain "name", "roots", and "meaning".
+- **Quality Filters:** All names must be 4-10 letters, have 2-3 syllables, and be filtered to avoid blacklist words or awkward English associations.
+`;
+        }
+
+        // --- GEMINI API CALL & RESPONSE PROCESSING ---
+        async function callGeminiAPI(prompt) {
+            if (!appState.apiKey) throw new Error("API Key is missing.");
+            const response = await fetch(`${API_BASE_URL}?key=${appState.apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+            });
+            if (!response.ok) throw new Error(`API Error: ${response.status}`);
+            const data = await response.json();
+            return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        }
+        
+        function getSyllableCount(word) {
+            word = word.toLowerCase();
+            if (word.length <= 3) return 1;
+            word = word.replace(/(?:[^laeiouy]es|ed|[^laeiouy]e)$/, '');
+            const match = word.match(/[aeiouy]{1,2}/g);
+            return match ? match.length : 1;
+        }
+
+        function parseAndScoreNames(responseText) {
+            let names = [];
+            try {
+                names = JSON.parse(responseText);
+            } catch {
+                console.warn("Failed JSON parse, attempting fallback regex.");
+                const matches = [...responseText.matchAll(/"name":\s*"([^"]+)"/g)];
+                names = matches.map(match => ({
+                    name: match[1],
+                    roots: 'N/A',
+                    meaning: 'Could not parse full details.'
+                }));
+            }
+            if (!Array.isArray(names)) return [];
+            const filtered = names.filter(n => n.name && !blacklist.some(b => n.name.toLowerCase().includes(b)));
+            filtered.forEach(n => {
+                n.score = 0;
+                if (n.name.length >= 4 && n.name.length <= 10) n.score++;
+                const syllables = getSyllableCount(n.name);
+                if (syllables >= 2 && syllables <= 3) n.score++;
+                if (/^[a-zA-Z]+$/.test(n.name)) n.score++;
+                if (n.meaning && n.meaning.length > 5) n.score++;
+                if (n.roots && n.roots.length > 5) n.score++;
+            });
+            return filtered.sort((a, b) => b.score - a.score);
+        }
+
+        // --- UI RENDERING & DOM MANIPULATION ---
+        function render() {
+            root.innerHTML = '';
+
+            const header = document.createElement('header');
+            header.className = "w-full bg-gray-900/80 backdrop-blur-sm border-b border-gray-700 p-4 flex items-center justify-between sticky top-0 z-20";
+            header.innerHTML = `
+                <h1 class="text-lg font-bold text-white">Cultural Coinage Generator</h1>
+                <button data-action="toggleControls" class="text-gray-300 hover:text-white p-2 rounded-full mr-2">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924-1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.096 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                </button>
+            `;
+
+            const main = document.createElement('main');
+            main.id = 'main-content';
+            main.className = 'flex-grow p-3 md:p-6 scrolling-panel overflow-y-auto';
+
+            const floatingButtons = document.createElement('div');
+            floatingButtons.className = 'fixed bottom-4 right-4 z-10 flex flex-col items-end gap-3';
+            floatingButtons.innerHTML = `
+                <button data-action="generateFirstNames" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-full shadow-lg flex items-center gap-2 min-h-12 min-w-12 justify-center">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                    <span class="hidden sm:inline">${appState.likedNames.length > 0 ? 'Riff on Liked' : 'First Names'}</span>
+                </button>
+                <button data-action="suggestMiddleNames" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-3 rounded-full shadow-lg flex items-center gap-2 min-h-12 min-w-12 justify-center text-sm">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"></path></svg>
+                    <span class="hidden sm:inline">Middle Names</span>
+                </button>
+            `;
+            root.append(header, main, floatingButtons);
+            if (appState.showPhilosophy) main.append(createPhilosophyModal());
+            if (appState.isControlsOpen) root.append(createControlsDrawer());
+            updateMainContent(main);
+        }
+        
+        function updateMainContent(mainContainer) {
+            mainContainer = mainContainer || document.getElementById('main-content');
+            if(!mainContainer) return;
+            mainContainer.innerHTML = '';
+
+            if (appState.isLoading) {
+                mainContainer.innerHTML = '<div class="flex h-full items-center justify-center text-center">Consulting the agent...</div>';
+            } else if (appState.error) {
+                mainContainer.innerHTML = `<div class="flex h-full items-center justify-center text-center text-red-400 bg-red-900/50 p-4 rounded-md">${appState.error}</div>`;
+            } else if (appState.generatedPrompt) {
+                mainContainer.append(createPromptDisplay());
+            } else if (appState.results.length === 0) {
+                mainContainer.innerHTML = '<div class="flex h-full items-center justify-center text-center text-gray-500"><p class="max-w-md">Your culturally coined names will appear here. Tap the settings icon to open the controls and begin.</p></div>';
+            } else {
+                mainContainer.append(createResultsGrid());
+            }
+        }
+
+        function createResultsGrid() {
+            const container = document.createElement('div');
+            container.innerHTML = `
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold text-white">Generated Names</h2>
+                    <button data-action="exportCSV" class="text-sm bg-gray-700 text-gray-300 hover:bg-gray-600 px-3 py-1.5 rounded-md font-medium">Export as CSV</button>
+                </div>
+            `;
+            const grid = document.createElement('div');
+            grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
+            
+            // PERFORMANCE: Use a DocumentFragment to batch DOM appends
+            const fragment = document.createDocumentFragment();
+            appState.results.forEach(item => {
+                const isLiked = appState.likedNames.some(n => n.name === item.name);
+                const card = document.createElement('div');
+                card.className = 'bg-gray-800 border border-gray-700 rounded-lg p-4 flex flex-col';
+                card.innerHTML = `
+                    <div class="flex justify-between items-start">
+                        <h3 class="text-2xl font-bold text-white pr-2">${item.name}</h3>
+                        <div class="flex items-center gap-2">
+                            <button data-action="copyName" data-name="${item.name}" class="text-gray-400 hover:text-white" title="Copy name">
+                               <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                            </button>
+                            <button data-action="like" class="like-btn text-gray-400 hover:text-white ${isLiked ? 'text-red-500' : ''}" title="${isLiked ? 'Unlike' : 'Like'}">
+                                <svg class="w-6 h-6" fill="${isLiked ? 'currentColor' : 'none'}" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 016.364 0L12 7.5l1.318-1.182a4.5 4.5 0 116.364 6.364L12 21l-7.682-7.318a4.5 4.5 0 010-6.364z"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <p class="text-gray-300 italic my-2">"${item.meaning || '...'}"</p>
+                    <p class="text-xs text-gray-500 mt-auto"><span class="font-semibold">Roots:</span> ${item.roots || '...'}</p>
+                `;
+                card.querySelector('[data-action="like"]').dataset.item = JSON.stringify(item);
+                fragment.appendChild(card);
+            });
+            grid.appendChild(fragment); // Single append operation
+            container.appendChild(grid);
+            return container;
+        }
+
+        function createPromptDisplay() {
+            const el = document.createElement('div');
+            el.className = 'bg-gray-800 p-4 rounded-lg mb-4 border border-gray-700 flex flex-col h-full';
+            el.innerHTML = `
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="font-bold text-white">Generated Prompt</h3>
+                    <button data-action="copyPrompt" class="text-sm bg-blue-600 text-white font-semibold px-3 py-1 rounded-md hover:bg-blue-700">Copy Prompt</button>
+                </div>
+                <p class="text-xs text-gray-400 mb-4">No API key found. Copy this prompt and paste it into your preferred LLM.</p>
+                <pre class="text-sm text-gray-300 bg-gray-900 rounded p-3 overflow-auto whitespace-pre-wrap flex-grow">${appState.generatedPrompt}</pre>
+            `;
+            return el;
+        }
+
+        function createControlsDrawer() {
+            const drawerContainer = document.createElement('div');
+            drawerContainer.id = 'controls-container';
+            drawerContainer.innerHTML = `<div class="fixed inset-0 bg-black/60 z-40" data-action="toggleControls"></div>`;
+            const drawer = document.createElement('div');
+            drawer.id = "controls-drawer";
+            drawer.className = "fixed top-0 left-0 h-full w-full max-w-xs sm:max-w-sm bg-gray-900 border-r border-gray-700 z-50 p-4 scrolling-panel overflow-y-auto";
+            drawer.innerHTML = `
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-xl font-bold text-white">Controls & Context</h2>
+                    <button data-action="toggleControls" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label for="apiKeyInput" class="block text-sm font-medium text-gray-300 mb-1">API Key</label>
+                        <input type="password" id="apiKeyInput" name="apiKey" value="${appState.apiKey}" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white" placeholder="Enter Gemini API key">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Real-World Context</label>
+                        <div class="space-y-2 rounded-md bg-gray-800 border border-gray-700 p-3">
+                            <input type="text" name="surname" value="${appState.surname}" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md p-2 text-sm" placeholder="Surname (e.g., Jones)">
+                            <input type="text" name="siblingNames" value="${appState.siblingNames}" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md p-2 text-sm" placeholder="Sibling Names (e.g., Olivia, Leo)">
+                            <input type="text" name="firstNameForMiddle" value="${appState.firstNameForMiddle}" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md p-2 text-sm" placeholder="First Name (for middle names)">
+                        </div>
+                    </div>
+                    <div id="liked-names-container"></div>
+                    <div>
+                        <label for="langInput" class="block text-sm font-medium text-gray-300 mb-1">Languages</label>
+                        <input type="text" id="langInput" name="selectedLanguages" value="${appState.selectedLanguages.join(', ')}" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white" placeholder="e.g., Celtic, Sanskrit">
+                    </div>
+                    <div>
+                        <label for="themeSelect" class="block text-sm font-medium text-gray-300 mb-1">Themes</label>
+                        <select id="themeSelect" name="selectedThemes" multiple class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white h-24">${themeOptions.map(opt => `<option value="${opt}" ${appState.selectedThemes.includes(opt) ? 'selected' : ''}>${opt}</option>`).join('')}</select>
+                    </div>
+                    <div>
+                        <label for="styleSelect" class="block text-sm font-medium text-gray-300 mb-1">Style</label>
+                        <select id="styleSelect" name="selectedStyle" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white">${styleOptions.map(opt => `<option value="${opt}" ${appState.selectedStyle === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select>
+                    </div>
+                    <button data-action="openPhilosophy" class="text-sm text-gray-400 hover:tex        };
 
         // --- CACHED DOM ELEMENTS ---
         let dom_root, dom_main, dom_controls_container, dom_generate_btn;
