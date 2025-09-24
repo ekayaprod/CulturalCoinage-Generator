@@ -140,11 +140,16 @@
         let rootsString = "";
         if (typeof it.roots === 'string') {
             rootsString = it.roots;
+        } else if (Array.isArray(it.roots)) {
+            rootsString = it.roots.map(root => {
+                if (typeof root === 'string') return root;
+                if (typeof root === 'object' && root !== null) {
+                    return Object.entries(root).map(([key, value]) => `${key} (${value})`).join(', ');
+                }
+                return '';
+            }).filter(Boolean).join(' + ');
         } else if (typeof it.roots === 'object' && it.roots !== null) {
-            // Handle object-based roots format e.g., {"sol": "Latin, sun"}
-            rootsString = Object.entries(it.roots)
-                .map(([key, value]) => `${key} (${value})`)
-                .join(' + ');
+            rootsString = Object.entries(it.roots).map(([key, value]) => `${key} (${value})`).join(' + ');
         }
         let roots = rootsString.trim();
 
@@ -509,7 +514,7 @@
   }
 
   function showToast(msg) {
-    const t = el('div','fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#0f2a41] px-4 py-2 rounded shadow text-sm fade');
+    const t = el('div','fixed bottom-6 left-1-2 -translate-x-1/2 bg-[#0f2a41] px-4 py-2 rounded shadow text-sm fade');
     t.textContent = msg; document.body.appendChild(t);
     setTimeout(()=> t.remove(), 1400);
   }
@@ -526,8 +531,9 @@
 You are the Cultural Coinage Agent. (See philosophy baked into codebase for guiding intent.)
 
 MISSION
-- Invent new, poetic, pronounceable ${gender || "unisex"} names by FUSING morphemes from the specified languages. DO NOT use common, existing names.
-- Each generation must be fresh, iterative, and responsive to user refinement.
+- Your primary mission is to INVENT COMPLETELY NEW, poetic, pronounceable ${gender || "unisex"} names.
+- You must achieve this by CREATIVELY FUSING morphemes (parts of words) from the specified languages.
+- DO NOT, under any circumstances, return common or existing names from your training data. The user wants novel inventions.
 
 SESSION MEMORY
 ${sessionMemoryInstruction}
@@ -540,21 +546,21 @@ Each object must include:
 {
   "name": "string",
   "meaning": "poetic interpretation",
-  "roots": "morpheme breakdown with origins",
+  "roots": "A string explaining the construction. Example: 'sol (Latin, sun) + ren (Japanese, lotus)'",
   "cluster": "stylistic grouping label",
   "confidence": 0.85
 }
 
 RULES
-1. Use ONLY specified languages; blend harmoniously if multiple.
-2. Name length: 4–10 letters, 2–3 syllables preferred.
+1. Language Adherence: Use ONLY the languages provided in the task to source your morphemes. Blend them harmoniously.
+2. Style Adherence: The user will specify a single style (e.g., "Grounded & Earthy"). ALL generated names must fit this one style. Do not generate names for other styles. This is a strict filter.
 3. Gender:
    - Unisex → neutral.
    - Male → consonant-strong, firm endings.
    - Female → vowel-rich, melodic.
-4. Roots: Always ≥2 fragments, with language + meaning. If invented, describe as “coined fragment”.
+4. Roots Breakdown: This is critical. The "roots" field must be a string that explains the construction. Example: "sol (Latin, sun) + ren (Japanese, lotus)".
 5. Clusters: Always include (e.g., “Airy & Flowing”, “Mythic & Cosmic”).
-6. Style must shape rhythm and sound choices, not just description.
+6. Name length: 4–10 letters, 2–3 syllables preferred.
 7. Variants mode: Keep ≥50% phonetic overlap with the source name, but shift thematic resonance.
 8. Harmonize with surname and sibling names if provided.
 
