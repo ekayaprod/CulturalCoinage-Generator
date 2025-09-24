@@ -19,204 +19,366 @@
 </head>
 <body class="h-screen">
     <div id="root" class="h-full flex flex-col"></div>
-
     <script>
         /**
          * Cultural Coinage Generator
          * --------------------------
          * This project fuses linguistic, cultural, and thematic influences to create evocative new names.
-         * - Language Origins: Nordic, Turkish, Latin, Celtic, etc.
-         * - Styles: Poetic, Modern, Mystical, etc.
-         * - Themes: Nature, Cosmic, Mythic, Oceanic, etc.
-         *
-         * Philosophy: Names are cultural coinages — inventions that feel rooted in tradition but point forward. 
          * The tool should always balance clarity (easy to spell/pronounce) with richness (evocative and layered).
-         *
-         * Future AI agents: Please honor this vision when extending functionality.
          */
 
-        const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent";
-        
-        // --- STATE MANAGEMENT ---
+        const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:streamGenerateContent";
+        const themeOptions = ["Nature", "Cosmic", "Balance", "Strength", "Water", "Light", "Shadow", "Music"];
+        const styleOptions = ["Lyrical & Melodic", "Archaic & Mythic", "Minimalist & Modern", "Heroic & Resonant"];
+        const blacklist = ["tuna", "ilay", "baran", "nur", "solren", "kuzel", "anal"];
+        const responseCache = new Map();
+
         let appState = {
             apiKey: "",
             isLoading: false,
             error: null,
             results: [],
+            likedNames: [],
             isControlsOpen: false,
+            showPhilosophy: false,
             selectedLanguages: ["Celtic", "Sanskrit"],
             selectedThemes: ["Light", "Balance"],
             selectedStyle: "Lyrical & Melodic",
+            surname: "",
+            siblingNames: "",
+            firstNameForMiddle: ""
         };
 
         const root = document.getElementById('root');
 
-        // --- API INTEGRATION ---
-        async function callGeminiAPI(prompt) {
-            if (!appState.apiKey) throw new Error("API Key is missing.");
-            const response = await fetch(`${API_BASE_URL}?key=${appState.apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-            });
-            if (!response.ok) {
-                const errorBody = await response.text();
-                throw new Error(`API Error ${response.status}: ${errorBody}`);
-            }
-            const data = await response.json();
-            return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        function getInitialState(key, defaultValue) {
+            try {
+                const saved = localStorage.getItem(key);
+                return saved ? JSON.parse(saved) : defaultValue;
+            } catch { return defaultValue; }
         }
 
-        // --- CORE LOGIC ---
-        async function executeGeneration() {
-            appState.isLoading = true;
-            appState.error = null;
-            render();
+        function saveState() {
+            const stateToSave = {
+                apiKey: appState.apiKey, likedNames: appState.likedNames, selectedLanguages: appState.selectedLanguages,
+                selectedThemes: appState.selectedThemes, selectedStyle: appState.selectedStyle, surname: appState.surname,
+                siblingNames: appState.siblingNames, firstNameForMiddle: appState.firstNameForMiddle,
+            };
+            localStorage.setItem('culturalCoinageState', JSON.stringify(stateToSave));
+        }
 
-            const prompt = `Generate cultural coinage names using the following inputs: [${appState.selectedLanguages.join(', ')}], [${appState.selectedThemes.join(', ')}], [${appState.selectedStyle}]. Return ONLY a valid JSON array of objects, where each object has "name", "roots", and "meaning" keys.`;
-
-            try {
-                const responseText = await callGeminiAPI(prompt);
-                let cleanText = responseText.trim();
-                if (cleanText.startsWith('```json')) {
-                    cleanText = cleanText.replace(/```json\s*/, '').replace(/```\s*$/, '');
-                }
-                const names = JSON.parse(cleanText);
-                appState.results = Array.isArray(names) ? names : [];
-            } catch (err) {
-                appState.error = "Something went wrong. Please check your API key or network connection.";
-                console.error("Raw API Error:", err);
-            } finally {
-                appState.isLoading = false;
-                render();
-            }
+        function loadStateFromLocalStorage() {
+            const savedState = getInitialState('culturalCoinageState', {});
+            appState = { ...appState, ...savedState };
         }
         
-        // --- UI RENDERING ---
+        function createSystemPrompt(taskPrompt) {
+            return `Generate 6 unisex names as a JSON array. Each object: {"name": "...", "roots": "...", "meaning": "..."}\n\n${taskPrompt}\n\nRequirements: 4-10 letters, 2-3 syllables, culturally respectful. Return ONLY the JSON array.`;
+        }
+
+        function getCacheKey(languages, themes, style) {
+            return `${languages.join(',')}-${themes.join(',')}-${style}`;
+        }
+
+        async function callGeminiAPIStream(prompt, onNameReceived) {
+            const response = await fetch(`${API_BASE_URL}?key=${appState.apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Connection': 'keep-alive' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { temperature: 0.7, maxOutputTokens: 1024, candidateCount: 1, topK: 20, topP: 0.8 }
+                })
+            });
+            if (!response.ok) throw new Error(`API Error ${response.status}: ${await response.text()}`);
+            
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let completeResponse = "";
+            let receivedNames = new Set();
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value, { stream: true });
+                const lines = chunk.split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const jsonStr = line.slice(6).trim();
+                            if (jsonStr === '[DONE]') continue;
+                            const data = JSON.parse(jsonStr);
+                            if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
+                                completeResponse += data.candidates[0].content.parts[0].text;
+                                let cleanResponse = completeResponse.trim().replace(/^```json\s*/, '').replace(/```\s*$/, '');
+                                const names = JSON.parse(cleanResponse);
+                                if (Array.isArray(names)) {
+                                    names.forEach(nameObj => {
+                                        if (nameObj.name && nameObj.meaning && nameObj.roots && !receivedNames.has(nameObj.name)) {
+                                            onNameReceived(nameObj);
+                                            receivedNames.add(nameObj.name);
+                                        }
+                                    });
+                                }
+                            }
+                        } catch {}
+                    }
+                }
+            }
+        }
+
+        async function callGeminiFallback(prompt) {
+            const fallbackUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
+            const response = await fetch(`${fallbackUrl}?key=${appState.apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { temperature: 0.7, maxOutputTokens: 1024, candidateCount: 1, topK: 20, topP: 0.8 }
+                })
+            });
+            if (!response.ok) throw new Error(`Fallback API Error ${response.status}: ${await response.text()}`);
+            const data = await response.json();
+            let text = data.candidates[0].content.parts[0].text.trim().replace(/^```json\s*/, '').replace(/```\s*$/, '');
+            return JSON.parse(text);
+        }
+
+        function getSyllableCount(word) {
+            word = word.toLowerCase();
+            if (word.length <= 3) return 1;
+            word = word.replace(/(?:[^laeiouy]es|ed|[^laeiouy]e)$/, '');
+            const match = word.match(/[aeiouy]{1,2}/g);
+            return match ? match.length : 1;
+        }
+
+        function scoreName(nameObj) {
+            let score = 0;
+            if (!nameObj || !nameObj.name) return score;
+            if (nameObj.name.length >= 4 && nameObj.name.length <= 10) score++;
+            const syllables = getSyllableCount(nameObj.name);
+            if (syllables >= 2 && syllables <= 3) score++;
+            if (/^[a-zA-Z]+$/.test(nameObj.name)) score++;
+            if (nameObj.meaning && nameObj.meaning.length > 5) score++;
+            if (nameObj.roots && nameObj.roots.length > 5) score++;
+            return score;
+        }
+
         function render() {
             root.innerHTML = '';
-
             const header = document.createElement('header');
             header.className = "w-full bg-gray-900/80 backdrop-blur-sm border-b border-gray-700 p-4 flex items-center justify-between sticky top-0 z-20";
-            header.innerHTML = `
-                <h1 class="text-lg font-bold text-white">Cultural Coinage Generator</h1>
-                <button data-action="toggleControls" class="text-gray-300 hover:text-white p-2 rounded-full mr-2">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924-1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.096 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                </button>
-            `;
-
+            header.innerHTML = `<h1 class="text-lg font-bold text-white">Cultural Coinage Generator</h1><button data-action="toggleControls" class="text-gray-300 hover:text-white p-2 rounded-full mr-2"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924-1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.096 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg></button>`;
             const main = document.createElement('main');
             main.id = 'main-content';
             main.className = 'flex-grow p-6 overflow-y-auto';
-
-            if (appState.error) {
-                main.innerHTML = `<div class="text-red-400 bg-red-900/50 p-4 rounded-md animate-fade-in">${appState.error}</div>`;
-            } else if (appState.isLoading) {
-                 main.innerHTML = `<div class="flex h-full items-center justify-center text-center"><svg class="animate-spin h-8 w-8 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg></div>`;
-            } else if (appState.results.length > 0) {
-                 const grid = document.createElement('div');
-                 grid.className = "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4";
-                 appState.results.forEach(item => {
-                     const card = document.createElement('div');
-                     card.className = "bg-gray-800 border border-gray-700 rounded-lg p-4 flex flex-col name-card";
-                     card.innerHTML = `
-                        <div class="flex justify-between items-start">
-                           <h3 class="text-2xl font-bold text-white pr-2">${item.name}</h3>
-                           <button class="copy-btn text-gray-400 hover:text-white" title="Copy name" data-action="copyName" data-name="${item.name}">
-                               <svg class="w-6 h-6 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                           </button>
-                        </div>
-                        <p class="text-gray-300 italic my-2">"${item.meaning || '...'}"</p>
-                        <p class="text-xs text-gray-500 mt-auto"><span class="font-semibold">Roots:</span> ${item.roots || '...'}</p>
-                     `;
-                     grid.appendChild(card);
-                 });
-                 main.appendChild(grid);
-            } else {
-                main.innerHTML = '<div class="flex h-full items-center justify-center text-center text-gray-500"><p>Your generated names will appear here.</p></div>';
-            }
-
             root.append(header, main);
+            updateMainContent(main);
+            if (appState.showPhilosophy) root.append(createPhilosophyModal());
+            if (appState.isControlsOpen) root.append(createControlsDrawer());
+        }
 
-            if (appState.isControlsOpen) {
-                root.append(createControlsDrawer());
+        function updateMainContent(container) {
+            container = container || document.getElementById('main-content');
+            container.innerHTML = '';
+            if (appState.error) {
+                container.innerHTML = `<div class="text-red-400 bg-red-900/50 p-4 rounded-md animate-fade-in">${appState.error}</div>`;
+            } else if (!appState.isLoading && appState.results.length === 0) {
+                container.innerHTML = '<div class="flex h-full items-center justify-center text-center text-gray-500"><p>Your generated names will appear here.</p></div>';
+            } else {
+                container.append(createResultsGrid());
             }
         }
-        
+
+        function createNameCard(item) {
+            const isLiked = appState.likedNames.some(n => n.name === item.name);
+            const card = document.createElement('div');
+            card.className = "bg-gray-800 border border-gray-700 rounded-lg p-4 flex flex-col name-card";
+            card.innerHTML = `<div class="flex justify-between items-start"><h3 class="text-2xl font-bold text-white pr-2">${item.name}</h3><div class="flex items-center gap-2"><button data-action="copyName" data-name="${item.name}" title="Copy"><svg class="w-6 h-6 pointer-events-none text-gray-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg></button><button data-action="like" class="like-btn text-gray-400 hover:text-white ${isLiked ? 'text-red-500' : ''}" title="${isLiked ? 'Unlike' : 'Like'}"><svg class="w-6 h-6 pointer-events-none" fill="${isLiked ? 'currentColor' : 'none'}" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 016.364 0L12 7.5l1.318-1.182a4.5 4.5 0 116.364 6.364L12 21l-7.682-7.318a4.5 4.5 0 010-6.364z"></path></svg></button></div></div><p class="text-gray-300 italic my-2">"${item.meaning || '...'}"</p><p class="text-xs text-gray-500 mt-auto"><span class="font-semibold">Roots:</span> ${item.roots || '...'}</p>`;
+            card.querySelector('[data-action="like"]').dataset.item = JSON.stringify(item);
+            return card;
+        }
+
+        function createResultsGrid() {
+            const container = document.createElement('div');
+            container.innerHTML = `<div class="flex justify-between items-center mb-4"><h2 class="text-xl font-bold text-white">Generated Names</h2><button data-action="exportCSV" class="text-sm bg-gray-700 text-gray-300 hover:bg-gray-600 px-3 py-1.5 rounded-md font-medium">Export as CSV</button></div>`;
+            const grid = document.createElement('div');
+            grid.id = 'results-grid';
+            grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
+            appState.results.forEach(item => grid.appendChild(createNameCard(item)));
+            container.appendChild(grid);
+            return container;
+        }
+
         function createControlsDrawer() {
             const drawerContainer = document.createElement('div');
             drawerContainer.className = 'fixed inset-0 z-30 animate-fade-in';
             drawerContainer.innerHTML = `<div class="fixed inset-0 bg-black/60" data-action="toggleControls"></div>`;
-            
             const drawer = document.createElement('div');
             drawer.className = "fixed top-0 left-0 h-full w-full max-w-xs sm:max-w-sm bg-gray-900 border-r border-gray-700 z-50 p-4 scrolling-panel overflow-y-auto";
-            drawer.innerHTML = `
-                <div class="flex items-center justify-between mb-6">
-                    <h2 class="text-xl font-bold text-white">Controls</h2>
-                    <button data-action="toggleControls" class="text-gray-400 hover:text-white text-2xl">&times;</button>
-                </div>
-                <div class="space-y-4">
-                    <div>
-                        <label for="apiKey" class="block text-sm font-medium text-gray-300">API Key</label>
-                        <input type="password" id="apiKey" value="${appState.apiKey}" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white mt-1">
-                    </div>
-                     <div>
-                        <label for="languages" class="block text-sm font-medium text-gray-300">Languages</label>
-                        <input type="text" id="languages" value="${appState.selectedLanguages.join(', ')}" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white mt-1">
-                    </div>
-                    <div>
-                        <label for="themes" class="block text-sm font-medium text-gray-300">Themes</label>
-                        <input type="text" id="themes" value="${appState.selectedThemes.join(', ')}" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white mt-1">
-                    </div>
-                    <div>
-                        <label for="style" class="block text-sm font-medium text-gray-300">Style</label>
-                        <input type="text" id="style" value="${appState.selectedStyle}" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white mt-1">
-                    </div>
-                    <button data-action="generate" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded shadow-lg">Generate</button>
-                    <button data-action="clear" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-semibold py-2 px-4 rounded">Clear Results</button>
-                </div>
-            `;
+            drawer.innerHTML = `<div class="flex items-center justify-between mb-6"><h2 class="text-xl font-bold text-white">Controls</h2><button data-action="toggleControls" class="text-gray-400 hover:text-white text-2xl">&times;</button></div><div class="space-y-4"><div><label for="apiKey" class="block text-sm font-medium text-gray-300">API Key</label><input type="password" id="apiKey" value="${appState.apiKey}" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white mt-1"></div><div><label class="block text-sm font-medium text-gray-300 mb-2">Real-World Context</label><div class="space-y-2 rounded-md bg-gray-800 border border-gray-700 p-3"><input type="text" id="surname" value="${appState.surname}" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md p-2 text-sm" placeholder="Surname (e.g., Jones)"><input type="text" id="siblingNames" value="${appState.siblingNames}" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md p-2 text-sm" placeholder="Sibling Names (e.g., Olivia, Leo)"><input type="text" id="firstNameForMiddle" value="${appState.firstNameForMiddle}" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md p-2 text-sm" placeholder="First Name (for middle names)"></div></div><div id="liked-names-container"></div><div><label for="languages" class="block text-sm font-medium text-gray-300">Languages</label><input type="text" id="languages" value="${appState.selectedLanguages.join(', ')}" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white mt-1"></div><div><label for="themes" class="block text-sm font-medium text-gray-300">Themes</label><select id="themes" multiple class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white mt-1 h-24">${themeOptions.map(opt => `<option value="${opt}" ${appState.selectedThemes.includes(opt) ? 'selected' : ''}>${opt}</option>`).join('')}</select></div><div><label for="style" class="block text-sm font-medium text-gray-300">Style</label><select id="style" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white mt-1">${styleOptions.map(opt => `<option value="${opt}" ${appState.selectedStyle === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select></div><div class="pt-4 space-y-2"><button id="generate-btn" data-action="generateFirstNames" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded shadow-lg flex items-center justify-center disabled:opacity-50" ${appState.isLoading ? 'disabled' : ''}>${appState.isLoading ? '<svg class="animate-spin h-5 w-5 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>' : ''} ${appState.likedNames.length > 0 ? 'Riff on Liked' : 'Generate Names'}</button><button data-action="suggestMiddleNames" class="w-full bg-blue-800 hover:bg-blue-900 text-white font-semibold py-2 px-4 rounded" ${appState.isLoading ? 'disabled' : ''}>Suggest Middle Names</button></div><button data-action="openPhilosophy" class="text-sm text-gray-400 hover:text-white text-center w-full pt-4">Show Philosophy</button></div>`;
             drawerContainer.appendChild(drawer);
+            updateLikedNames(drawer);
             return drawerContainer;
         }
 
-        // --- EVENT HANDLERS ---
+        function updateLikedNames(container) {
+            const likedContainer = container.querySelector('#liked-names-container');
+            if (!likedContainer) return;
+            likedContainer.innerHTML = '';
+            if (appState.likedNames.length === 0) return;
+            const label = document.createElement('label');
+            label.className = 'block text-sm font-medium text-gray-300 mb-2';
+            label.textContent = 'Liked Names (Inspiration)';
+            const itemsContainer = document.createElement('div');
+            itemsContainer.className = 'space-y-2';
+            appState.likedNames.forEach(nameObj => {
+                const item = document.createElement('div');
+                item.className = 'flex justify-between items-center bg-gray-700 px-2 py-1 rounded';
+                item.innerHTML = `<span class="text-sm text-white">${nameObj.name}</span><button data-action="like" class="text-gray-400 hover:text-white" data-item='${JSON.stringify(nameObj)}'>×</button>`;
+                itemsContainer.appendChild(item);
+            });
+            likedContainer.append(label, itemsContainer);
+        }
+        
+        function createPhilosophyModal() {
+            const modal = document.createElement('div');
+            modal.className = "fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 animate-fade-in";
+            modal.setAttribute('data-action', 'closePhilosophy');
+            modal.innerHTML = `<div class="bg-gray-800 rounded-lg p-6 max-w-md w-full shadow-2xl"><h2 class="text-xl font-bold mb-4 text-white">Philosophy</h2><p class="text-gray-300 mb-6">This tool invents new names by blending cultural origins with thematic inspiration. The agent acts as an expert scholar to provide context-aware, poetic suggestions.</p><button data-action="closePhilosophy" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-md w-full text-white font-semibold">Close</button></div>`;
+            return modal;
+        }
+
         function handleAction(e) {
             const target = e.target.closest('[data-action]');
-            if (!target) return;
-
+            if (!target || target.disabled) return;
             const action = target.dataset.action;
 
             switch(action) {
-                case 'toggleControls':
-                    appState.isControlsOpen = !appState.isControlsOpen;
-                    render();
-                    break;
-                case 'generate':
+                case 'toggleControls': appState.isControlsOpen = !appState.isControlsOpen; render(); break;
+                case 'openPhilosophy': appState.showPhilosophy = true; render(); break;
+                case 'closePhilosophy': appState.showPhilosophy = false; render(); break;
+                case 'like': handleLike(JSON.parse(target.dataset.item)); break;
+                case 'generateFirstNames':
+                case 'suggestMiddleNames':
                     appState.apiKey = document.getElementById('apiKey').value;
-                    appState.selectedLanguages = document.getElementById('languages').value.split(',').map(s => s.trim());
-                    appState.selectedThemes = document.getElementById('themes').value.split(',').map(s => s.trim());
+                    appState.surname = document.getElementById('surname').value;
+                    appState.siblingNames = document.getElementById('siblingNames').value;
+                    appState.firstNameForMiddle = document.getElementById('firstNameForMiddle').value;
+                    appState.selectedLanguages = document.getElementById('languages').value.split(',').map(s => s.trim()).filter(Boolean);
+                    appState.selectedThemes = Array.from(document.getElementById('themes').selectedOptions).map(opt => opt.value);
                     appState.selectedStyle = document.getElementById('style').value;
-                    appState.isControlsOpen = false; // Close drawer on generate
-                    executeGeneration();
+                    appState.isControlsOpen = false;
+                    if (action === 'generateFirstNames') handleGenerateFirstNames();
+                    else handleSuggestMiddleNames();
                     break;
-                case 'clear':
-                    appState.results = [];
-                    appState.error = null;
-                    render();
-                    break;
-                case 'copyName':
-                    navigator.clipboard.writeText(target.dataset.name);
-                    break;
+                case 'exportCSV': exportCSV(); break;
+                case 'copyName': navigator.clipboard.writeText(target.dataset.name); break;
             }
         }
         
-        //--- INITIALIZATION ---
+        function handleLike(nameObject) {
+            const isLiked = appState.likedNames.some(n => n.name === nameObject.name);
+            appState.likedNames = isLiked ? appState.likedNames.filter(n => n.name !== nameObject.name) : [...appState.likedNames, nameObject];
+            saveState();
+            render();
+        }
+
+        async function executeGeneration(task) {
+            appState.isLoading = true;
+            appState.error = null;
+            appState.results = [];
+            render();
+            const cacheKey = getCacheKey(appState.selectedLanguages, appState.selectedThemes, appState.selectedStyle);
+            if (!appState.likedNames.length) {
+                const cached = responseCache.get(cacheKey);
+                if (cached) {
+                    appState.results = cached;
+                    appState.isLoading = false;
+                    render();
+                    return;
+                }
+            }
+            const prompt = createSystemPrompt(task);
+            const grid = document.getElementById('results-grid');
+            let finalResults = [];
+
+            try {
+                await callGeminiAPIStream(prompt, (newName) => {
+                    const filtered = !blacklist.some(b => newName.name.toLowerCase().includes(b.toLowerCase()));
+                    if(filtered) {
+                        newName.score = scoreName(newName);
+                        finalResults.push(newName);
+                        grid.appendChild(createNameCard(newName));
+                    }
+                });
+            } catch (streamError) {
+                console.warn('Streaming failed, using fallback:', streamError);
+                try {
+                    const names = await callGeminiFallback(prompt);
+                    grid.innerHTML = ''; 
+                    finalResults = [];
+                    names.forEach(newName => {
+                        const filtered = !blacklist.some(b => newName.name.toLowerCase().includes(b.toLowerCase()));
+                        if(filtered) {
+                            newName.score = scoreName(newName);
+                            finalResults.push(newName);
+                            grid.appendChild(createNameCard(newName));
+                        }
+                    });
+                } catch (fallbackError) {
+                    appState.error = `Both streaming and fallback failed. ${fallbackError.message}`;
+                }
+            } finally {
+                appState.isLoading = false;
+                appState.results = finalResults.sort((a,b) => b.score - a.score);
+                if (appState.results.length > 0 && !appState.likedNames.length) {
+                    responseCache.set(cacheKey, appState.results);
+                }
+                render();
+            }
+        }
+
+        function handleGenerateFirstNames() {
+            let task;
+            if (appState.likedNames.length > 0) {
+                task = `Analyze these liked names: "${appState.likedNames.map(n => n.name).join(', ')}". Generate 6 new names in a similar style.`;
+            } else {
+                task = `Generate 6 names from languages: ${appState.selectedLanguages.join(', ')}, themes: ${appState.selectedThemes.join(', ')}, style: "${appState.selectedStyle}".`;
+            }
+            if (appState.surname) task += ` Harmonize with surname "${appState.surname}".`;
+            if (appState.siblingNames) task += ` Compatible with siblings "${appState.siblingNames}".`;
+            executeGeneration(task);
+        }
+
+        function handleSuggestMiddleNames() {
+            if (!appState.firstNameForMiddle) {
+                appState.error = "Please enter a first name to suggest middle names.";
+                updateMainContent();
+                return;
+            }
+            let task = `Generate 6 middle names for "${appState.firstNameForMiddle}". Use themes: ${appState.selectedThemes.join(', ')}, style: "${appState.selectedStyle}".`;
+            if (appState.surname) task += ` Harmonize with surname "${appState.surname}".`;
+            executeGeneration(task);
+        }
+
+        function exportCSV() {
+            if (!appState.results.length) return;
+            let csvContent = "data:text/csv;charset=utf-8,Name,Meaning,Roots,Score\n";
+            appState.results.forEach(item => {
+                const row = [`"${item.name}"`, `"${item.meaning}"`, `"${item.roots}"`, item.score].join(',');
+                csvContent += row + "\r\n";
+            });
+            const link = document.createElement("a");
+            link.href = encodeURI(csvContent);
+            link.download = "cultural-coinage-names.csv";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+        
         document.addEventListener('DOMContentLoaded', () => {
+            loadStateFromLocalStorage();
             root.addEventListener('click', handleAction);
             render();
         });
-
     </script>
 </body>
 </html>
