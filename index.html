@@ -135,8 +135,19 @@
     return rawArray.map(it => {
         let name = (it.name || "").toString().trim();
         let meaning = (it.meaning || "").toString().trim();
-        let roots = (it.roots || "").toString().trim();
         let cluster = (it.cluster || "").toString().trim();
+        
+        let rootsString = "";
+        if (typeof it.roots === 'string') {
+            rootsString = it.roots;
+        } else if (typeof it.roots === 'object' && it.roots !== null) {
+            // Handle object-based roots format e.g., {"sol": "Latin, sun"}
+            rootsString = Object.entries(it.roots)
+                .map(([key, value]) => `${key} (${value})`)
+                .join(' + ');
+        }
+        let roots = rootsString.trim();
+
 
         // Substring blacklist check
         if (fullBlacklist.some(b => name.toLowerCase().includes(b))) return null;
@@ -515,8 +526,7 @@
 You are the Cultural Coinage Agent. (See philosophy baked into codebase for guiding intent.)
 
 MISSION
-- Craft short, poetic, pronounceable ${gender || "unisex"} names from the specified languages.
-- Treat names as cultural artifacts, not random strings.
+- Invent new, poetic, pronounceable ${gender || "unisex"} names by FUSING morphemes from the specified languages. DO NOT use common, existing names.
 - Each generation must be fresh, iterative, and responsive to user refinement.
 
 SESSION MEMORY
@@ -544,7 +554,7 @@ RULES
    - Female → vowel-rich, melodic.
 4. Roots: Always ≥2 fragments, with language + meaning. If invented, describe as “coined fragment”.
 5. Clusters: Always include (e.g., “Airy & Flowing”, “Mythic & Cosmic”).
-6. Style (e.g., “Lyrical & Melodic”) must shape rhythm and sound choices, not just description.
+6. Style must shape rhythm and sound choices, not just description.
 7. Variants mode: Keep ≥50% phonetic overlap with the source name, but shift thematic resonance.
 8. Harmonize with surname and sibling names if provided.
 
@@ -582,7 +592,7 @@ ${task}
         const likedStr = appState.likedNames.map(n => n.name).join(', ');
         task = `Analyze these liked names: ${likedStr}. Generate ${DEFAULT_COUNT} new names in a similar style, using themes of ${appState.selectedThemes.join(', ')}.`;
     } else {
-        task = `Languages: ${allLangs.join(', ')} | Themes: ${appState.selectedThemes.join(', ')} | Style: ${appState.selectedStyle} | Return ${DEFAULT_COUNT} names.`;
+        task = `Invent ${DEFAULT_COUNT} names that STRICTLY adhere to the "${appState.selectedStyle}" style. Use only the following languages to create new, blended names: ${allLangs.join(', ')}. Themes for inspiration: ${appState.selectedThemes.join(', ')}.`;
     }
     if (appState.siblingNames) task += ` Keep stylistically compatible with siblings: ${appState.siblingNames}.`;
     if (appState.surname) task += ` Harmonize with surname: ${appState.surname}.`;
