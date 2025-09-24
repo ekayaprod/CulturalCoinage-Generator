@@ -62,7 +62,7 @@
     userBlacklist: [],
     rawApiResponse: null,
     sessionGeneratedNames: [],
-    sortOrder: "generated",
+    outputAlphabet: "English",
   };
   
   // --- UI Element Cache ---
@@ -89,6 +89,7 @@
             firstNameForMiddle: appState.firstNameForMiddle,
             userBlacklist: appState.userBlacklist,
             gender: appState.gender,
+            outputAlphabet: appState.outputAlphabet,
         };
         localStorage.setItem('culturalCoinageState', JSON.stringify(stateToSave));
     } catch (e) { console.warn("Could not save state to localStorage:", e); }
@@ -99,7 +100,7 @@
         const saved = localStorage.getItem('culturalCoinageState');
         if (saved) {
             const parsed = JSON.parse(saved);
-            const defaults = { likedNames: [], userLanguages: [], userBlacklist: [], gender: "Unisex" };
+            const defaults = { likedNames: [], userLanguages: [], userBlacklist: [], gender: "Unisex", outputAlphabet: "English" };
             Object.assign(appState, { ...defaults, ...parsed });
         }
       } catch (e) { console.warn("Could not load state from localStorage:", e); }
@@ -107,23 +108,34 @@
 
   function parseApiResponse(text) {
     if (!text) return [];
-
-    // Strip code fences if present
     let cleanedText = text.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
 
-    // Try parsing as JSON
     try {
       const parsed = JSON.parse(cleanedText);
       if (Array.isArray(parsed)) return parsed;
       if (parsed.names && Array.isArray(parsed.names)) return parsed.names;
       if (typeof parsed === "object") return Object.values(parsed).flat();
     } catch (e) {
-      console.warn("Strict JSON parse failed. Falling back to regex.", e);
+      console.warn("Strict JSON parse failed. Falling back to multi-regex.", e);
     }
 
-    // Fallback regex extraction
-    const matches = [...cleanedText.matchAll(/"name"\s*:\s*"([^"]+)"/g)];
-    return matches.map(m => ({ name: m[1], meaning: "", roots: "", cluster: "" }));
+    // Fallback: Regex for objects within the text
+    const results = [];
+    const objectRegex = /{\s*"name":\s*"([^"]+)",\s*"meaning":\s*"([^"]+)",\s*"roots":\s*"([^"]+)",\s*"cluster":\s*"([^"]+)"\s*}/g;
+    let match;
+    while ((match = objectRegex.exec(cleanedText)) !== null) {
+      results.push({
+        name: match[1],
+        meaning: match[2],
+        roots: match[3],
+        cluster: match[4],
+      });
+    }
+    if (results.length > 0) return results;
+
+    // Final fallback: Regex for names only if object parsing fails
+    const nameMatches = [...cleanedText.matchAll(/"name"\s*:\s*"([^"]+)"/g)];
+    return nameMatches.map(m => ({ name: m[1], meaning: "", roots: "", cluster: "" }));
   }
 
   function processApiResponse(rawArray) {
@@ -136,16 +148,17 @@
       let roots = (it.roots || "").toString().trim();
       let cluster = (it.cluster || "").toString().trim() || appState.selectedStyle;
 
-      // Blacklist enforcement
+      if (!name) return null; // Filter out empty name objects
       if (fullBlacklist.some(b => name.toLowerCase().includes(b))) return null;
 
-      // Enrich short meanings into poetic form
-      if (meaning && meaning.split(/\s+/).length < 3) {
-        meaning = `${meaning} — evokes ${appState.selectedThemes.join(" and ").toLowerCase()}, a guiding presence.`;
+      if (!meaning) {
+        meaning = `A name evoking ${appState.selectedThemes.join(" and ").toLowerCase()}, with roots in ${appState.selectedLanguages.join(' & ')}.`;
+      } else if (meaning.split(/\s+/).length < 3) {
+        meaning = `${meaning} — a name that evokes ${appState.selectedThemes.join(" and ").toLowerCase()}.`;
       }
 
       return { name, meaning, roots, cluster };
-    }).filter(Boolean); // Filter nulls
+    }).filter(Boolean);
   }
 
   // --- UI Update Functions ---
@@ -160,14 +173,7 @@
           ui.results.panel.innerHTML = '<div class="flex-1 flex items-center justify-center small-muted h-full">No names yet — click Generate.</div>';
           updateDebugViewer();
       } else {
-          let sortedResults = [...appState.results];
-          if (appState.sortOrder === 'alphabetical') {
-              sortedResults.sort((a, b) => a.name.localeCompare(b.name));
-          } else if (appState.sortOrder === 'cluster') {
-              sortedResults.sort((a, b) => a.cluster.localeCompare(b.cluster) || a.name.localeCompare(b.name));
-          }
-
-          const clusters = sortedResults.reduce((acc, item) => {
+          const clusters = appState.results.reduce((acc, item) => {
               (acc[item.cluster] = acc[item.cluster] || []).push(item);
               return acc;
           }, {});
@@ -231,7 +237,10 @@
       const details = el('details', 'mt-4');
       details.innerHTML = `<summary class="cursor-pointer text-sm small-muted">Show Raw Model Output</summary>
       <pre class="debug-panel bg-[#0b1622] border border-[#223447] rounded p-2 text-xs mt-2 whitespace-pre-wrap"></pre>
-      <button class="chip mt-2" data-action="copy-debug">Copy Debug JSON</button>`;
+      <div class="flex gap-2 mt-2">
+        <button class="chip" data-action="copy-debug">Copy Raw</button>
+        <button class="chip" data-action="copy-parsed">Copy Parsed</button>
+      </div>`;
       details.querySelector('pre').textContent = appState.rawApiResponse;
       ui.debug.container.append(details);
     }
@@ -262,7 +271,7 @@
       const likeBtn = el('button', `chip ${isLiked ? 'active' : ''}`);
       likeBtn.dataset.action = 'like-name';
       likeBtn.dataset.name = item.name;
-      likeBtn.innerHTML = '&hearts; Like'; // Using innerHTML for the heart entity is safe and standard practice.
+      likeBtn.innerHTML = '&hearts; Like';
 
       const variantsBtn = el('button', 'chip');
       variantsBtn.dataset.action = 'variants';
@@ -347,7 +356,10 @@
           doGenerate('variants', name);
       } else if (action === 'copy-debug') {
           navigator.clipboard.writeText(appState.rawApiResponse);
-          showToast('Copied Debug Info!');
+          showToast('Copied Raw Output!');
+      } else if (action === 'copy-parsed') {
+          navigator.clipboard.writeText(JSON.stringify(appState.results, null, 2));
+          showToast('Copied Parsed JSON!');
       }
   }
 
@@ -414,6 +426,17 @@
     genderSel.addEventListener('change', e => { appState.gender = e.target.value; saveState(); });
     genderSection.append(genderSel);
 
+    const alphabetSection = el('div');
+    alphabetSection.innerHTML = `<label class="text-sm font-medium">Output Alphabet</label>`;
+    const alphabetSel = el('select','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm mt-1');
+    ["English"].forEach(a => { // Can be expanded later
+        const op = el('option'); op.value = a; op.textContent = a;
+        if(appState.outputAlphabet === a) op.selected = true;
+        alphabetSel.append(op);
+    });
+    alphabetSel.addEventListener('change', e => { appState.outputAlphabet = e.target.value; saveState(); });
+    alphabetSection.append(alphabetSel);
+
     const blacklistSection = el('div');
     blacklistSection.innerHTML = `<label class="text-sm font-medium">User Blacklist</label>`;
     ui.controls.blacklistChips = el('div', 'flex flex-wrap gap-2 mt-1');
@@ -445,40 +468,33 @@
     btnWrap.append(ui.controls.generateButton, middleBtn, exportBtn, clearBtn);
     
     const controlsContainer = el('div'); 
-    controlsContainer.append(apiKeySection, contextSection, languagesSection, themesSection, styleSection, genderSection, ui.controls.likedNamesContainer, blacklistSection, btnWrap);
+    controlsContainer.append(apiKeySection, contextSection, languagesSection, themesSection, styleSection, genderSection, alphabetSection, ui.controls.likedNamesContainer, blacklistSection, btnWrap);
     left.append(controlsContainer);
 
     const right = el('div','md:col-span-2 bg-[#071427] border border-[#0e2030] rounded-xl p-5 flex flex-col gap-4');
-    const resultsHeader = el('div', 'flex items-center justify-between');
+    const resultsHeader = el('div');
     resultsHeader.innerHTML = '<div><h2 class="text-lg font-semibold">Results</h2><div class="small-muted">Poetic, culturally coined names</div></div>';
-    const sortSel = el('select', 'bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
-    sortSel.innerHTML = `<option value="generated">As Generated</option><option value="alphabetical">Alphabetical</option><option value="cluster">By Cluster</option>`;
-    sortSel.addEventListener('change', e => {
-        appState.sortOrder = e.target.value;
-        updateResultsPanel();
-    });
-    resultsHeader.append(sortSel);
     
     ui.results.panel = el('div','mt-2 p-3 bg-[#071a25] border border-[#0f2a3a] rounded-lg min-h-[280px] flex flex-col');
     ui.debug = { container: el('div') };
     right.append(resultsHeader, ui.results.panel, ui.debug.container);
 
     controlsContainer.addEventListener('click', handleControlsClick);
-    right.addEventListener('click', handleResultsPanelClick); // Delegated listener for results panel + debug
+    right.addEventListener('click', handleResultsPanelClick);
     
     appWrap.append(left, right);
     ui.root.append(appWrap);
   }
 
   function showToast(msg) {
-    const t = el('div','fixed bottom-6 left-1-2 -translate-x-1-2 bg-[#0f2a41] px-4 py-2 rounded shadow text-sm fade');
+    const t = el('div','fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#0f2a41] px-4 py-2 rounded shadow text-sm fade');
     t.textContent = msg; document.body.appendChild(t);
     setTimeout(()=> t.remove(), 1400);
   }
 
   function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-  function buildSystemPrompt(task, gender, sessionHistory) {
+  function buildSystemPrompt(task, gender, sessionHistory, outputAlphabet) {
     const fullBlacklist = [...appState.userBlacklist];
     const sessionMemoryInstruction = sessionHistory.length > 0
       ? `Avoid repeating or too closely resembling these session names: ${sessionHistory.join(', ')}. Instead, explore new combinations in a similar spirit.`
@@ -491,18 +507,23 @@ Your craft is name-smithing: fusing cultural morphemes into new, resonant names 
 PRINCIPLES:
 - Names are artifacts, not random strings.
 - Use only morphemes and etymologies from the languages listed in TASK. Do not include other languages. If a gap exists, invent a new coined root marked as (coined).
-- Draw on morphemes, syllables, and phonetic textures from the selected languages in the TASK.
-- Adapt them with creativity: use phonological glue (connecting vowels, softened endings), and reshape roots for flow.
-- Invent new morphemes if necessary. Mark them clearly as (coined) in 'roots'.
-- Balance sound and meaning: each name must have resonance, story, and beauty.
-- Meaning should not be a dictionary definition. Instead, write it as a short poetic note connecting the parts to the chosen themes.
+- Adapt with creativity: use phonological glue (connecting vowels, softened endings), and reshape roots for flow.
+- Balance sound and meaning: each name must have resonance and a story.
+- Meaning should be a short poetic note connecting the parts to the chosen themes.
 - Roots clarity: Spell out each part of the root, e.g., "astro (Greek: star) + ren (Nordic: raven)".
 - Style must follow the selected tone (lyrical, archaic, heroic, etc.).
 
 SESSION CONTEXT:
 ${sessionMemoryInstruction}
 Blacklist: ${fullBlacklist.join(", ")}
-Contextual harmony: Shape names to lean ${gender}-appropriate when relevant, while keeping poetic freedom. Consider sibling names and surnames.
+Contextual harmony: Consider sibling names, surnames, and gender preference.
+Gender Guidance:
+- Male: favor consonant-final/strong clusters, firmer endings.
+- Female: favor open syllables, vowel-rich endings and melodic cadence.
+- Unisex: neutral balance; prefer flexible endings.
+
+FINAL STEP:
+After coining a name, transliterate it to the specified '${outputAlphabet}' alphabet. For example, Kıvanç becomes Kivanc, Sølvag becomes Solvag, Rónán becomes Ronan.
 
 OUTPUT FORMAT:
 Return ONLY a raw JSON array of objects, with no markdown or text wrapping. 
@@ -547,7 +568,7 @@ ${task}
         if (!appState.firstNameForMiddle) { appState.error = "Please provide a first name to generate middle names."; appState.isLoading = false; updateResultsPanel(); return; }
         task = `Generate ${DEFAULT_COUNT} middle names for "${appState.firstNameForMiddle}" using morphemes exclusively from these languages: ${allLangs.join(', ')}. All names must embody the "${appState.selectedStyle}" style. Draw thematic inspiration from: ${appState.selectedThemes.join(', ')}.`;
     } else if (mode === 'variants') {
-        task = `Generate ${DEFAULT_COUNT} variants of the name "${contextName}" using morphemes exclusively from these languages: ${allLangs.join(', ')}. Maintain similar phonetic feel while embodying the "${appState.selectedStyle}" style throughout.`;
+        task = `Generate ${DEFAULT_COUNT} variants of the name "${contextName}". These must have at least 50% phonetic overlap and not be simple respellings. Use morphemes from: ${allLangs.join(', ')} and embody the "${appState.selectedStyle}" style.`;
     } else if (appState.likedNames.length > 0) {
         const likedStr = appState.likedNames.map(n => n.name).join(', ');
         task = `Analyze these liked names: ${likedStr}. Generate ${DEFAULT_COUNT} new names that embody the "${appState.selectedStyle}" style using morphemes exclusively from these languages: ${allLangs.join(', ')}. Draw thematic inspiration from: ${appState.selectedThemes.join(', ')}.`;
@@ -557,10 +578,10 @@ ${task}
     if (appState.siblingNames) task += ` Harmonize stylistically with existing siblings: ${appState.siblingNames}.`;
     if (appState.surname) task += ` Consider compatibility with surname: ${appState.surname}.`;
     
-    let prompt = buildSystemPrompt(task, appState.gender, appState.sessionGeneratedNames);
+    let prompt = buildSystemPrompt(task, appState.gender, appState.sessionGeneratedNames, appState.outputAlphabet);
     try {
         const raw = await callGeminiOnce(prompt);
-        appState.rawApiResponse = raw; // Always save raw response for debugging
+        appState.rawApiResponse = raw;
         const parsed = parseApiResponse(raw);
         
         const processed = processApiResponse(parsed);
