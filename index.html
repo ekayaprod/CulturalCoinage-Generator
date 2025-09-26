@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Cultural Coinage Generator</title>
+  <title>Morpheme Studio</title>
 
   <!-- Tailwind -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -13,11 +13,52 @@
     .scrolling-panel::-webkit-scrollbar{ width:10px } .scrolling-panel::-webkit-scrollbar-thumb{ background:#213449; border-radius:8px }
     .fade { animation: fade 220ms ease-out; } @keyframes fade{ from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
     .small-muted { color:#9fb0c7; font-size:13px }
-    .chip { padding:6px 10px; border-radius:999px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.03); cursor:pointer; user-select:none }
+    .chip { padding:6px 10px; border-radius:999px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.03); cursor:pointer; user-select:none; display: inline-flex; align-items: center; gap: 4px; }
     .chip.active { background: linear-gradient(90deg,#294e86,#2b6fb3); color:white; box-shadow:0 6px 18px rgba(41,78,134,0.14) }
     .spinner{ border:4px solid rgba(255,255,255,0.06); border-top-color:#60a5fa; border-radius:999px; width:36px; height:36px; animation:spin 0.9s linear infinite } @keyframes spin{ to{transform:rotate(360deg)} }
-    a.debug { color:#8fb6ff; text-decoration:underline }
     .debug-panel { max-height: 200px; overflow-y: auto; }
+    .thumb-btn.active svg { fill: #60a5fa; }
+    .progress-bar { height: 4px; background: rgba(255,255,255,0.1); border-radius: 999px; }
+    .progress-fill { height: 100%; background: #60a5fa; border-radius: 999px; transition: width 0.2s ease-out; }
+    .cultural-origin { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 600; text-transform: uppercase; }
+    .origin-celtic { background-color: #059669; color: #d1fae5; }
+    .origin-nordic { background-color: #1d4ed8; color: #dbeafe; }
+    .origin-latin { background-color: #be123c; color: #fee2e2; }
+    .origin-turkish { background-color: #c2410c; color: #ffedd5; }
+    .origin-greek { background-color: #b45309; color: #fef3c7; }
+    .origin-sanskrit { background-color: #6d28d9; color: #ede9fe; }
+    .origin-japanese { background-color: #db2777; color: #fce7f3; }
+    .origin-slavic { background-color: #0f766e; color: #ccfbf1; }
+    .origin-arabic { background-color: #166534; color: #dcfce7; }
+    .origin-spanish { background-color: #ca8a04; color: #fef9c3; }
+    .origin-irish { background-color: #16a34a; color: #dcfce7; }
+    .origin-default { background-color: #4b5563; color: #f3f4f6; }
+    .favorited { border-color: #fbbf24 !important; box-shadow: 0 0 15px rgba(251, 191, 36, 0.2); }
+    .modal-backdrop {
+        display: none; /* Hidden by default */
+        position: fixed;
+        inset: 0;
+        background-color: rgba(0,0,0,0.6);
+        backdrop-filter: blur(4px);
+        animation: fadeIn 150ms ease-out;
+    }
+    @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+    .modal-content { animation: slideIn 200ms ease-out; }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+    .tab-button {
+        padding: 8px 16px;
+        border-radius: 999px;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: all 150ms ease-in-out;
+    }
+    .tab-button.active {
+        background-color: #1e3a8a;
+        color: white;
+        border-color: #2563eb;
+    }
+    .tab-content { display: none; }
+    .tab-content.active { display: flex; flex-direction: column; gap: 1rem; animation: fade 200ms ease-out; }
   </style>
 </head>
 <body>
@@ -27,7 +68,7 @@
 (function () {
   // Philosophy for LLMs
   const PHILOSOPHY = `
-  CULTURAL COINAGE GENERATOR
+  MORPHEME STUDIO
 
   Names are artifacts, not random strings.
   Blend cultural morphemes, syllables, and phonetic textures into poetic,
@@ -38,20 +79,24 @@
   `;
 
   // --- CONFIG ---
-  const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
-  const DEFAULT_COUNT = 6;
-  const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Slavic","Japanese","Greek","Sanskrit","Arabic"];
+  const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
+  const APP_VERSION = "2.2";
+  const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Japanese","Greek","Spanish","Irish"];
   const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music", "Fire", "Mountain", "Ocean", "Sky", "Forest", "Mythic"];
   const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant", "Elegant & Refined", "Grounded & Earthy", "Mystical & Ethereal"];
+  const PHONETIC_PREFERENCES = ["Balanced (default)", "Soft consonants", "Strong consonants", "Vowel-heavy", "Consonant clusters", "Flowing rhythm", "Staccato rhythm"];
+  const CULTURAL_APPROACHES = ["Modern Fusion (default)", "Traditional", "Poetic Interpretation"];
+
 
   // --- State ---
   const appState = {
+    version: APP_VERSION,
     apiKey: "",
     isLoading: false,
     error: null,
     results: [],
     likedNames: [],
-    selectedLanguages: ["Celtic", "Sanskrit"],
+    selectedLanguages: ["Spanish", "Irish"],
     selectedThemes: ["Light","Balance"],
     selectedStyle: "Lyrical & Melodic",
     gender: "Unisex",
@@ -63,13 +108,19 @@
     rawApiResponse: null,
     sessionGeneratedNames: [],
     outputAlphabet: "English",
+    batchSize: 6,
+    phoneticPreference: PHONETIC_PREFERENCES[0],
+    culturalApproach: CULTURAL_APPROACHES[0],
+    generationMode: 'diverse', // 'quick' or 'diverse'
+    activeTab: 'create',
   };
   
   // --- UI Element Cache ---
   const ui = {
       root: document.getElementById('app'),
       controls: {},
-      results: {}
+      results: {},
+      modals: {},
   };
 
   // --- Helpers ---
@@ -77,33 +128,43 @@
   
   function saveState() {
     try {
-        const stateToSave = {
-            apiKey: appState.apiKey,
-            selectedLanguages: appState.selectedLanguages,
-            selectedThemes: appState.selectedThemes,
-            selectedStyle: appState.selectedStyle,
-            likedNames: appState.likedNames,
-            userLanguages: appState.userLanguages,
-            surname: appState.surname,
-            siblingNames: appState.siblingNames,
-            firstNameForMiddle: appState.firstNameForMiddle,
-            userBlacklist: appState.userBlacklist,
-            gender: appState.gender,
-            outputAlphabet: appState.outputAlphabet,
-        };
-        localStorage.setItem('culturalCoinageState', JSON.stringify(stateToSave));
+        const stateToSave = { ...appState };
+        delete stateToSave.isLoading;
+        delete stateToSave.error;
+        delete stateToSave.rawApiResponse;
+        
+        localStorage.setItem('morphemeStudioState', JSON.stringify(stateToSave));
     } catch (e) { console.warn("Could not save state to localStorage:", e); }
+  }
+
+  function migrateOldState(oldState) {
+    return {
+      ...oldState,
+      version: APP_VERSION,
+      batchSize: oldState.batchSize || 6,
+      phoneticPreference: oldState.phoneticPreference || PHONETIC_PREFERENCES[0],
+      culturalApproach: oldState.culturalApproach || CULTURAL_APPROACHES[0],
+      generationMode: oldState.generationMode || 'diverse',
+    };
   }
 
   function loadState() {
       try {
-        const saved = localStorage.getItem('culturalCoinageState');
+        const saved = localStorage.getItem('morphemeStudioState');
         if (saved) {
-            const parsed = JSON.parse(saved);
-            const defaults = { likedNames: [], userLanguages: [], userBlacklist: [], gender: "Unisex", outputAlphabet: "English" };
+            let parsed = JSON.parse(saved);
+            if (!parsed.version || parsed.version < APP_VERSION) {
+              parsed = migrateOldState(parsed);
+            }
+            const defaults = { likedNames: [], userLanguages: [], userBlacklist: [], gender: "Unisex", outputAlphabet: "English", generationMode: 'diverse' };
             Object.assign(appState, { ...defaults, ...parsed });
         }
       } catch (e) { console.warn("Could not load state from localStorage:", e); }
+  }
+
+  function transliterate(text) {
+    if (!text) return "";
+    return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   }
 
   function parseApiResponse(text) {
@@ -119,23 +180,18 @@
       console.warn("Strict JSON parse failed. Falling back to multi-regex.", e);
     }
 
-    // Fallback: Regex for objects within the text
     const results = [];
-    const objectRegex = /{\s*"name":\s*"([^"]+)",\s*"meaning":\s*"([^"]+)",\s*"roots":\s*"([^"]+)",\s*"cluster":\s*"([^"]+)"\s*}/g;
+    const objectRegex = /{\s*"name":\s*"([^"]+)",\s*"meaning":\s*"([^"]+)",\s*"roots":\s*"([^"]+)",\s*"cluster":\s*"([^"]+)",\s*"pronunciation":\s*"([^"]+)",\s*"syllableCount":\s*(\d+)\s*}/g;
     let match;
     while ((match = objectRegex.exec(cleanedText)) !== null) {
       results.push({
-        name: match[1],
-        meaning: match[2],
-        roots: match[3],
-        cluster: match[4],
+        name: match[1], meaning: match[2], roots: match[3], cluster: match[4], pronunciation: match[5], syllableCount: parseInt(match[6])
       });
     }
     if (results.length > 0) return results;
 
-    // Final fallback: Regex for names only if object parsing fails
     const nameMatches = [...cleanedText.matchAll(/"name"\s*:\s*"([^"]+)"/g)];
-    return nameMatches.map(m => ({ name: m[1], meaning: "", roots: "", cluster: "" }));
+    return nameMatches.map(m => ({ name: m[1], meaning: "", roots: "", cluster: "", pronunciation: "", syllableCount: 0 }));
   }
 
   function processApiResponse(rawArray) {
@@ -148,31 +204,38 @@
       let roots = (it.roots || "").toString().trim();
       let cluster = (it.cluster || "").toString().trim() || appState.selectedStyle;
 
-      if (!name) return null; // Filter out empty name objects
+      if (!name) return null;
+      if (appState.outputAlphabet === 'English') { name = transliterate(name); }
       if (fullBlacklist.some(b => name.toLowerCase().includes(b))) return null;
+      if (!meaning) { meaning = `A name evoking ${appState.selectedThemes.join(" and ").toLowerCase()} with a ${appState.selectedStyle.toLowerCase()} cadence.`;}
 
-      if (!meaning) {
-        meaning = `A name evoking ${appState.selectedThemes.join(" and ").toLowerCase()}, with roots in ${appState.selectedLanguages.join(' & ')}.`;
-      } else if (meaning.split(/\s+/).length < 3) {
-        meaning = `${meaning} — a name that evokes ${appState.selectedThemes.join(" and ").toLowerCase()}.`;
-      }
-
-      return { name, meaning, roots, cluster };
+      return { name, meaning, roots, cluster, pronunciation: it.pronunciation || "", syllableCount: it.syllableCount || 0, isFavorited: false };
     }).filter(Boolean);
   }
 
   // --- UI Update Functions ---
-  function updateResultsPanel() {
+  function updateResultsPanel(progressInterval = null) {
       ui.results.panel.innerHTML = '';
       if (appState.isLoading) {
-          ui.results.panel.innerHTML = '<div class="flex items-center justify-center py-8"><div class="spinner"></div></div>';
+          const modeText = appState.generationMode === 'quick' ? 'quickly...' : 'with diversity...';
+          ui.results.panel.innerHTML = `
+            <div class="flex flex-col items-center justify-center py-8 gap-4">
+              <div class="spinner"></div>
+              <div class="text-sm small-muted">Crafting ${appState.batchSize} names ${modeText}</div>
+              <div class="progress-bar w-48 rounded-full">
+                <div class="progress-fill" style="width: 0%"></div>
+              </div>
+            </div>`;
       } else if (appState.error) {
+          if (progressInterval) clearInterval(progressInterval);
           ui.results.panel.innerHTML = `<div class="bg-[#2b1a1a] border border-[#5b2626] rounded p-4"><div class="text-red-300 font-semibold">Error</div><div class="small-muted mt-2">${escapeHtml(appState.error)}</div></div>`;
           updateDebugViewer();
       } else if (!appState.results.length) {
+          if (progressInterval) clearInterval(progressInterval);
           ui.results.panel.innerHTML = '<div class="flex-1 flex items-center justify-center small-muted h-full">No names yet — click Generate.</div>';
           updateDebugViewer();
       } else {
+          if (progressInterval) clearInterval(progressInterval);
           const clusters = appState.results.reduce((acc, item) => {
               (acc[item.cluster] = acc[item.cluster] || []).push(item);
               return acc;
@@ -193,9 +256,10 @@
   function updateControls() {
     updateChipSelector(ui.controls.languageChips, [...new Set([...LANG_OPTIONS, ...appState.userLanguages])]);
     updateChipSelector(ui.controls.themeChips, THEME_OPTIONS);
-    updateLikedNamesSection();
-    updateUserBlacklist();
-    ui.controls.generateButton.textContent = appState.likedNames.length > 0 ? 'Riff on Liked' : 'Generate Names';
+    const baseText = appState.likedNames.length > 0 ? 'Riff on Liked' : 'Generate';
+    ui.controls.generateButton.textContent = `${baseText} (${appState.batchSize})`;
+    ui.controls.quickGenBtn.classList.toggle('active', appState.generationMode === 'quick');
+    ui.controls.diverseGenBtn.classList.toggle('active', appState.generationMode === 'diverse');
   }
 
   function updateChipSelector(container, options) {
@@ -208,29 +272,6 @@
       });
   }
   
-  function updateUserBlacklist() {
-      ui.controls.blacklistChips.innerHTML = '';
-      appState.userBlacklist.forEach(word => {
-          const chip = el('div', 'chip flex items-center gap-2');
-          chip.innerHTML = `<span>${word}</span><button class="font-mono text-xs opacity-70" data-action="remove-blacklist" data-word="${word}">x</button>`;
-          ui.controls.blacklistChips.append(chip);
-      });
-  }
-
-  function updateLikedNamesSection() {
-      ui.controls.likedNamesContainer.innerHTML = '';
-      if (appState.likedNames.length > 0) {
-        const label = el('label', 'text-sm font-medium'); label.textContent = 'Liked Names (Inspiration)';
-        const wrap = el('div', 'flex flex-wrap gap-2 mt-1');
-        appState.likedNames.forEach(nameObj => {
-            const chip = el('div', 'chip active flex items-center gap-2');
-            chip.innerHTML = `<span>${nameObj.name}</span><button class="font-mono text-xs opacity-70" data-action="remove-liked" data-name="${nameObj.name}">x</button>`;
-            wrap.append(chip);
-        });
-        ui.controls.likedNamesContainer.append(label, wrap);
-      }
-  }
-
   function updateDebugViewer() {
     ui.debug.container.innerHTML = '';
     if (appState.rawApiResponse) {
@@ -246,41 +287,51 @@
     }
   }
 
-  // --- UI Creation ---
   function createNameCard(item) {
       const isLiked = appState.likedNames.some(n => n.name === item.name);
-      const card = el('div','bg-[#081426] border border-[#123047] rounded p-4 flex flex-col gap-2 fade');
+      const isDisliked = appState.userBlacklist.includes(item.name.toLowerCase());
+      const card = el('div',`bg-[#081426] border border-[#123047] rounded p-4 flex flex-col gap-2 fade ${item.isFavorited ? 'favorited' : ''}`);
       
       const header = el('div', 'flex items-start justify-between gap-2');
       const nameEl = el('div', 'text-xl font-semibold'); nameEl.textContent = item.name;
       header.append(nameEl);
 
-      const meaningEl = el('div', 'italic small-muted'); meaningEl.textContent = item.meaning || '—';
+      if (item.pronunciation) {
+        const pronEl = el('div', 'italic small-muted text-xs'); pronEl.textContent = `/${item.pronunciation}/`;
+        header.append(pronEl);
+      }
       
+      const meaningEl = el('div', 'italic small-muted'); meaningEl.textContent = item.meaning || '—';
       const rootsEl = el('div', 'text-xs mt-auto small-muted');
-      const strongTag = el('strong');
-      strongTag.textContent = 'Roots: ';
+      const strongTag = el('strong'); strongTag.textContent = 'Roots: ';
       rootsEl.append(strongTag, document.createTextNode(item.roots || '—'));
+
+      const metaRow = el('div', 'flex items-center gap-2 mt-1 flex-wrap');
+      if (item.syllableCount > 0) {
+        const syllableTag = el('span', 'small-muted text-xs');
+        syllableTag.textContent = `${item.syllableCount} syllables`;
+        metaRow.append(syllableTag);
+      }
+
+      if (item.roots) {
+        const origins = [...new Set(item.roots.match(/\(([^,)]+)/g))].map(o => o.substring(1));
+        origins.forEach(origin => {
+          const originTag = el('span', `cultural-origin origin-${origin.toLowerCase()} origin-default`);
+          originTag.textContent = origin;
+          metaRow.append(originTag);
+        });
+      }
       
       const actions = el('div', 'flex flex-wrap gap-2 mt-2');
-      const copyBtn = el('button', 'chip');
-      copyBtn.dataset.action = 'copy-name';
-      copyBtn.dataset.name = item.name;
-      copyBtn.textContent = 'Copy';
-
-      const likeBtn = el('button', `chip ${isLiked ? 'active' : ''}`);
-      likeBtn.dataset.action = 'like-name';
-      likeBtn.dataset.name = item.name;
-      likeBtn.innerHTML = '&hearts; Like';
-
-      const variantsBtn = el('button', 'chip');
-      variantsBtn.dataset.action = 'variants';
-      variantsBtn.dataset.name = item.name;
-      variantsBtn.textContent = 'Variants';
+      const copyBtn = el('button', 'chip'); copyBtn.dataset.action = 'copy-name'; copyBtn.dataset.name = item.name; copyBtn.textContent = 'Copy';
+      const thumbUpBtn = el('button', `chip thumb-btn ${isLiked ? 'active' : ''}`); thumbUpBtn.dataset.action = 'thumb-up'; thumbUpBtn.dataset.name = item.name;
+      thumbUpBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M7.247 4.86c.13-.25.39-.41.683-.41h1.146c.293 0 .553.16.683.41l1.838 3.515.01.011c.144.293.183.626.107.926-.076.3-.26.555-.504.708l-1.353.768c-.294.167-.655.158-.94-.02l-1.92-1.077c-.39-.218-.553-.69-.37-1.082l1.63-3.232z"/><path d="M8.864 1.34c.338 0 .64.19.782.493l1.838 3.515.01.011c.144.293.183.626.107.926-.076.3-.26.555-.504.708l-1.353.768c-.294.167-.655.158-.94-.02l-1.92-1.077c-.39-.218-.553-.69-.37-1.082L8.082 1.833c.142-.304.444-.493.782-.493zM14 13.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 13.5v-9A1.5 1.5 0 0 1 3.5 3H4a.5.5 0 0 1 0 1h-.5A.5.5 0 0 0 3 4.5v9a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 1 1 0v1z"/></svg>`;
+      const thumbDownBtn = el('button', `chip thumb-btn ${isDisliked ? 'active' : ''}`); thumbDownBtn.dataset.action = 'thumb-down'; thumbDownBtn.dataset.name = item.name;
+      thumbDownBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M7.247 11.14c.13.25.39.41.683.41h1.146c.293 0 .553-.16.683-.41l1.838-3.515.01-.011c.144-.293.183-.626.107-.926-.076-.3-.26-.555-.504-.708L12.02 5.25c-.294-.167-.655-.158-.94.02l-1.92 1.077c-.39.218-.553-.69-.37 1.082l1.63 3.232z"/><path d="M8.864 14.66c.338 0 .64-.19.782-.493l1.838-3.515.01-.011c.144-.293.183-.626.107-.926-.076-.3-.26-.555-.504-.708l-1.353-.768c-.294-.167-.655-.158-.94.02l-1.92 1.077c-.39.218-.553-.69-.37 1.082l1.63 3.232c.142.304.444.493.782.493zM14 2.5a1.5 1.5 0 0 0-1.5-1.5h-9A1.5 1.5 0 0 0 2 2.5v9A1.5 1.5 0 0 0 3.5 13H4a.5.5 0 0 0 0-1h-.5a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 .5.5v1a.5.5 0 0 0 1 0v-1z"/></svg>`;
+      const variantsBtn = el('button', 'chip'); variantsBtn.dataset.action = 'variants'; variantsBtn.dataset.name = item.name; variantsBtn.textContent = 'Variants';
+      actions.append(copyBtn, thumbUpBtn, thumbDownBtn, variantsBtn);
       
-      actions.append(copyBtn, likeBtn, variantsBtn);
-      
-      card.append(header, meaningEl, rootsEl, actions);
+      card.append(header, meaningEl, rootsEl, metaRow, actions);
       return card;
   }
   
@@ -298,6 +349,14 @@
     return btn;
   }
 
+  function toggleModal(modal, show) {
+    if (show) {
+        modal.style.display = 'flex';
+    } else {
+        modal.style.display = 'none';
+    }
+  }
+  
   // --- Event Handlers ---
   function handleControlsClick(event) {
       const chip = event.target.closest('.chip[data-option]');
@@ -310,23 +369,6 @@
               : [...appState[stateKey], option].slice(-max);
           saveState();
           updateControls();
-          return;
-      }
-
-      const removeLikedBtn = event.target.closest('[data-action="remove-liked"]');
-      if (removeLikedBtn) {
-          appState.likedNames = appState.likedNames.filter(n => n.name !== removeLikedBtn.dataset.name);
-          saveState();
-          updateControls();
-          updateResultsPanel();
-          return;
-      }
-      
-      const removeBlacklistBtn = event.target.closest('[data-action="remove-blacklist"]');
-      if(removeBlacklistBtn) {
-          appState.userBlacklist = appState.userBlacklist.filter(w => w !== removeBlacklistBtn.dataset.word);
-          saveState();
-          updateUserBlacklist();
       }
   }
   
@@ -334,11 +376,12 @@
       const btn = event.target.closest('button[data-action]');
       if (!btn) return;
       const { action, name } = btn.dataset;
+      const nameLower = name ? name.toLowerCase() : '';
       
       if (action === 'copy-name') {
           navigator.clipboard.writeText(name);
           showToast('Copied!');
-      } else if (action === 'like-name') {
+      } else if (action === 'thumb-up') {
           const isLiked = appState.likedNames.some(n => n.name === name);
           if (isLiked) {
               appState.likedNames = appState.likedNames.filter(n => n.name !== name);
@@ -346,12 +389,27 @@
           } else {
               const nameObj = appState.results.find(r => r.name === name);
               if (nameObj) appState.likedNames.push(nameObj);
+              if (appState.userBlacklist.includes(nameLower)) {
+                  appState.userBlacklist = appState.userBlacklist.filter(w => w !== nameLower);
+              }
               showToast('Liked!');
           }
           saveState();
-          btn.classList.toggle('active');
-          updateLikedNamesSection();
-          ui.controls.generateButton.textContent = appState.likedNames.length > 0 ? 'Riff on Liked' : 'Generate Names';
+          updateResultsPanel();
+      } else if (action === 'thumb-down') {
+          const isDisliked = appState.userBlacklist.includes(nameLower);
+          if (isDisliked) {
+              appState.userBlacklist = appState.userBlacklist.filter(w => w !== nameLower);
+              showToast('Removed from Blacklist!');
+          } else {
+              appState.userBlacklist.push(nameLower);
+              if (appState.likedNames.some(n => n.name === name)) {
+                  appState.likedNames = appState.likedNames.filter(n => n.name !== name);
+              }
+              showToast('Blacklisted!');
+          }
+          saveState();
+          updateResultsPanel();
       } else if (action === 'variants') {
           doGenerate('variants', name);
       } else if (action === 'copy-debug') {
@@ -360,6 +418,12 @@
       } else if (action === 'copy-parsed') {
           navigator.clipboard.writeText(JSON.stringify(appState.results, null, 2));
           showToast('Copied Parsed JSON!');
+      } else if (action === 'copy-prompt') {
+          const pre = event.target.closest('.flex-col').querySelector('pre');
+          if (pre) {
+              navigator.clipboard.writeText(pre.textContent);
+              showToast('Prompt Copied!');
+          }
       }
   }
 
@@ -367,21 +431,40 @@
     ui.root.innerHTML = '';
     const appWrap = el('div','max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6');
     const left = el('div','md-col-span-1 bg-[#071425] border border-[#0e2334] rounded-xl p-5 flex flex-col gap-4 h-fit');
-    left.innerHTML = `<h1 class="text-xl font-semibold">Cultural Coinage</h1><div class="small-muted mt-1">Blend culture, sound & meaning</div>`;
     
-    const apiKeySection = el('div');
-    apiKeySection.innerHTML = `<label class="text-sm font-medium">Gemini API Key</label>`;
-    const inputKey = el('input','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm mt-1');
-    inputKey.type = 'password'; inputKey.placeholder = 'Paste API key'; inputKey.value = appState.apiKey;
-    inputKey.addEventListener('change', e => { appState.apiKey = e.target.value.trim(); saveState(); });
-    apiKeySection.append(inputKey);
+    // Header & Settings Bar
+    const header = el('div', 'flex justify-between items-center');
+    const titleWrap = el('div');
+    titleWrap.innerHTML = `<h1 class="text-xl font-semibold">Morpheme Studio</h1><div class="small-muted mt-1">Craft a name with meaning</div>`;
+    const settingsWrap = el('div', 'flex items-center gap-2');
+    const settingsBtn = el('button', 'chip');
+    settingsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311a1.464 1.464 0 0 1-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/></svg>`;
+    settingsBtn.addEventListener('click', () => toggleModal(ui.modals.settings, true));
+    
+    const historyBtn = el('button', 'chip');
+    historyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M1 2.828c.885-.37 2.154-.769 3.388-.893 1.234-.124 2.502.217 3.374.647.872.43 1.662.879 2.421.983.759.104 1.45.023 2.148-.21a.5.5 0 0 1 .546.886c-.602.232-1.203.29-1.75.186-.346-.074-.658-.148-.99-.234-.234-.058-.45-.09-.642-.11L11.21 3.42c-.568-.08-1.232-.303-1.843-.504C8.68 2.736 8.076 2.5 7.5 2.5c-.576 0-1.18.236-1.78.432-.6.198-1.27.426-1.86.504L3.21 3.92c-.21.028-.43.06-.66.118-.346.086-.68.17-.99.248-.547.133-1.15.08-1.75-.18a.5.5 0 0 1 .546-.886zM1.5 4.05v8.1c0 .27.22.5.5.5h12a.5.5 0 0 0 .5-.5v-8.1c-.602.232-1.203.29-1.75.186-.346-.074-.658-.148-.99-.234-.234-.058-.45-.09-.642-.11L11.21 3.42c-.568-.08-1.232-.303-1.843-.504C8.68 2.736 8.076 2.5 7.5 2.5c-.576 0-1.18.236-1.78.432-.6.198-1.27.426-1.86.504L3.21 3.92c-.21.028-.43.06-.66.118-.346.086-.68.17-.99.248-.547.133-1.15.08-1.75-.18a.5.5 0 1 1 .546-.886z"/></svg>`;
+    historyBtn.addEventListener('click', () => {
+      updateHistoryModal();
+      toggleModal(ui.modals.history, true);
+    });
 
-    const contextSection = el('div');
-    contextSection.innerHTML = `<label class="text-sm font-medium">Real-World Context (Optional)</label>`;
-    const contextGrid = el('div', 'grid grid-cols-2 gap-2 mt-1');
-    contextGrid.append(createContextInput("Surname", "surname"), createContextInput("Sibling Names", "siblingNames"), createContextInput("First Name (for middle names)", "firstNameForMiddle", "col-span-2"));
-    contextSection.append(contextGrid);
+    settingsWrap.append(historyBtn, settingsBtn);
+    header.append(titleWrap, settingsWrap);
+    left.append(header);
+
+    // --- TABS ---
+    const tabContainer = el('div', 'flex items-center gap-2 p-1 bg-[#0b1622] rounded-full');
+    const createTabBtn = el('button', 'tab-button flex-1'); createTabBtn.textContent = 'Create'; createTabBtn.dataset.tab = 'create';
+    const refineTabBtn = el('button', 'tab-button flex-1'); refineTabBtn.textContent = 'Refine'; refineTabBtn.dataset.tab = 'refine';
     
+    tabContainer.append(createTabBtn, refineTabBtn);
+    left.append(tabContainer);
+    
+    const tabContentContainer = el('div');
+    const createTabContent = el('div', 'tab-content'); createTabContent.id = 'create-tab';
+    const refineTabContent = el('div', 'tab-content'); refineTabContent.id = 'refine-tab';
+    
+    // -- CREATE TAB CONTENT --
     const languagesSection = el('div');
     languagesSection.innerHTML = `<label class="text-sm font-medium">Languages (choose 1–3)</label>`;
     ui.controls.languageChips = el('div', 'flex flex-wrap gap-2 mt-1');
@@ -391,8 +474,7 @@
     langInput.placeholder = 'Add a language...';
     const addLangBtn = createAddButton(() => {
         const newLang = langInput.value.trim();
-        const allLangs = [...new Set([...LANG_OPTIONS, ...appState.userLanguages])];
-        if (newLang && !allLangs.map(l => l.toLowerCase()).includes(newLang.toLowerCase())) {
+        if (newLang && ![...LANG_OPTIONS, ...appState.userLanguages].map(l=>l.toLowerCase()).includes(newLang.toLowerCase())) {
             appState.userLanguages.push(newLang);
             appState.selectedLanguages = [...appState.selectedLanguages, newLang].slice(-3);
             saveState(); updateControls();
@@ -425,52 +507,75 @@
     });
     genderSel.addEventListener('change', e => { appState.gender = e.target.value; saveState(); });
     genderSection.append(genderSel);
+    createTabContent.append(languagesSection, themesSection, styleSection, genderSection);
 
-    const alphabetSection = el('div');
-    alphabetSection.innerHTML = `<label class="text-sm font-medium">Output Alphabet</label>`;
-    const alphabetSel = el('select','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm mt-1');
-    ["English"].forEach(a => { // Can be expanded later
-        const op = el('option'); op.value = a; op.textContent = a;
-        if(appState.outputAlphabet === a) op.selected = true;
-        alphabetSel.append(op);
+    // -- REFINE TAB CONTENT --
+    const contextSection = el('div');
+    contextSection.innerHTML = `<label class="text-sm font-medium">Real-World Context (Optional)</label>`;
+    const contextGrid = el('div', 'grid grid-cols-2 gap-2 mt-1');
+    contextGrid.append(createContextInput("Surname", "surname"), createContextInput("Sibling Names", "siblingNames"), createContextInput("First Name (for middle names)", "firstNameForMiddle", "col-span-2"));
+    contextSection.append(contextGrid);
+
+    const phoneticSection = el('div');
+    phoneticSection.innerHTML = `<label class="text-sm font-medium">Phonetic Preference</label>`;
+    const phoneticSel = el('select','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm mt-1');
+    PHONETIC_PREFERENCES.forEach(p => { const op = el('option'); op.value = p; op.textContent = p; if(appState.phoneticPreference === p) op.selected = true; phoneticSel.append(op); });
+    phoneticSel.addEventListener('change', e => { appState.phoneticPreference = e.target.value; saveState(); });
+    phoneticSection.append(phoneticSel);
+    
+    const culturalSection = el('div');
+    culturalSection.innerHTML = `<label class="text-sm font-medium">Cultural Approach</label>`;
+    const culturalSel = el('select','w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm mt-1');
+    CULTURAL_APPROACHES.forEach(c => { const op = el('option'); op.value = c; op.textContent = c; if(appState.culturalApproach === c) op.selected = true; culturalSel.append(op); });
+    culturalSel.addEventListener('change', e => { appState.culturalApproach = e.target.value; saveState(); });
+    culturalSection.append(culturalSel);
+    refineTabContent.append(contextSection, phoneticSection, culturalSection);
+    
+    tabContentContainer.append(createTabContent, refineTabContent);
+    left.append(tabContentContainer);
+    
+    // -- GENERATION CONTROLS --
+    const genControlsSection = el('div', 'flex flex-col gap-4');
+    const genModeSection = el('div');
+    genModeSection.innerHTML = `<label class="text-sm font-medium">Generation Mode</label>`;
+    const genModeWrap = el('div', 'flex items-center gap-2 mt-1');
+    ui.controls.quickGenBtn = el('button', 'chip flex-1 justify-center'); ui.controls.quickGenBtn.textContent = "Quick";
+    ui.controls.diverseGenBtn = el('button', 'chip flex-1 justify-center'); ui.controls.diverseGenBtn.textContent = "Diverse";
+    ui.controls.quickGenBtn.addEventListener('click', () => { appState.generationMode = 'quick'; saveState(); updateControls(); });
+    ui.controls.diverseGenBtn.addEventListener('click', () => { appState.generationMode = 'diverse'; saveState(); updateControls(); });
+    genModeWrap.append(ui.controls.quickGenBtn, ui.controls.diverseGenBtn);
+    genControlsSection.append(genModeSection);
+
+    const batchSizeSection = el('div');
+    batchSizeSection.innerHTML = `<label class="text-sm font-medium">Batch Size</label>`;
+    const batchSliderWrap = el('div', 'flex items-center gap-2 mt-1');
+    const slider = el('input', 'w-full');
+    slider.type = 'range'; slider.min = '3'; slider.max = '12'; slider.value = appState.batchSize;
+    const batchLabel = el('span', 'text-sm font-mono w-8 text-center'); batchLabel.textContent = appState.batchSize;
+    slider.addEventListener('input', e => { 
+        appState.batchSize = parseInt(e.target.value);
+        batchLabel.textContent = appState.batchSize;
+        updateControls();
     });
-    alphabetSel.addEventListener('change', e => { appState.outputAlphabet = e.target.value; saveState(); });
-    alphabetSection.append(alphabetSel);
-
-    const blacklistSection = el('div');
-    blacklistSection.innerHTML = `<label class="text-sm font-medium">User Blacklist</label>`;
-    ui.controls.blacklistChips = el('div', 'flex flex-wrap gap-2 mt-1');
-    const addBlacklistWrap = el('div', 'flex gap-2 mt-2');
-    const blacklistInput = el('input', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
-    blacklistInput.placeholder = 'Add a word to blacklist...';
-    const addBlacklistBtn = createAddButton(() => {
-        const newWord = blacklistInput.value.trim().toLowerCase();
-        if (newWord && !appState.userBlacklist.includes(newWord)) {
-            appState.userBlacklist.push(newWord);
-            saveState(); updateUserBlacklist();
-        }
-        blacklistInput.value = '';
-    });
-    addBlacklistWrap.append(blacklistInput, addBlacklistBtn);
-    blacklistSection.append(ui.controls.blacklistChips, addBlacklistWrap);
-
-    ui.controls.likedNamesContainer = el('div');
+    slider.addEventListener('change', () => saveState());
+    batchSliderWrap.append(slider, batchLabel);
+    batchSizeSection.append(batchSliderWrap);
+    genControlsSection.append(batchSizeSection);
     
     const btnWrap = el('div','flex flex-wrap gap-2 mt-2');
     ui.controls.generateButton = el('button','bg-gradient-to-r from-[#3b82f6] to-[#2563eb] text-white px-4 py-2 rounded font-semibold shadow flex-1');
-    ui.controls.generateButton.addEventListener('click', () => doGenerate('first'));
+    ui.controls.generateButton.addEventListener('click', () => doGenerate(appState.generationMode));
     const middleBtn = el('button','bg-[#1e3a8a] text-white px-4 py-2 rounded font-semibold shadow'); middleBtn.textContent = 'Middle Names';
     middleBtn.addEventListener('click', () => doGenerate('middle'));
     const exportBtn = el('button','bg-[#0e2436] border border-[#1b3146] px-3 py-2 rounded text-sm small-muted'); exportBtn.textContent = 'Export';
     exportBtn.addEventListener('click', exportCSV);
     const clearBtn = el('button','bg-transparent border border-[#233542] px-3 py-2 rounded text-sm small-muted'); clearBtn.textContent = 'Clear';
-    clearBtn.addEventListener('click', ()=>{ appState.results=[]; appState.error=null; appState.rawApiResponse=null; appState.sessionGeneratedNames = []; updateResultsPanel(); });
+    clearBtn.addEventListener('click', ()=>{ appState.results=[]; appState.error=null; appState.rawApiResponse=null; appState.sessionGeneratedNames = []; appState.likedNames = []; appState.userBlacklist = []; saveState(); updateControls(); updateResultsPanel(); });
     btnWrap.append(ui.controls.generateButton, middleBtn, exportBtn, clearBtn);
-    
-    const controlsContainer = el('div'); 
-    controlsContainer.append(apiKeySection, contextSection, languagesSection, themesSection, styleSection, genderSection, alphabetSection, ui.controls.likedNamesContainer, blacklistSection, btnWrap);
-    left.append(controlsContainer);
+    genControlsSection.append(btnWrap);
 
+    left.append(genControlsSection);
+    
     const right = el('div','md:col-span-2 bg-[#071427] border border-[#0e2030] rounded-xl p-5 flex flex-col gap-4');
     const resultsHeader = el('div');
     resultsHeader.innerHTML = '<div><h2 class="text-lg font-semibold">Results</h2><div class="small-muted">Poetic, culturally coined names</div></div>';
@@ -479,60 +584,179 @@
     ui.debug = { container: el('div') };
     right.append(resultsHeader, ui.results.panel, ui.debug.container);
 
-    controlsContainer.addEventListener('click', handleControlsClick);
-    right.addEventListener('click', handleResultsPanelClick);
+    // MODALS
+    const settingsModal = el('div', 'modal-backdrop items-center justify-center');
+    settingsModal.innerHTML = `
+      <div class="modal-content bg-[#0e2030] border border-[#1b3146] rounded-lg p-6 flex flex-col gap-4 w-96">
+        <h3 class="text-lg font-semibold">Settings</h3>
+        <div>
+          <label class="text-sm font-medium">Gemini API Key</label>
+          <input id="modal-api-key" type="password" class="w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm mt-1" placeholder="Paste API key">
+        </div>
+        <div>
+          <label class="text-sm font-medium">Output Alphabet</label>
+          <select id="modal-output-alphabet" class="w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm mt-1">
+             <option>English</option>
+          </select>
+        </div>
+        <button id="close-settings-modal" class="chip bg-blue-800/50 justify-center">Close</button>
+      </div>`;
+    ui.modals.settings = settingsModal;
+
+    const historyModal = el('div', 'modal-backdrop items-center justify-center');
+    historyModal.innerHTML = `
+      <div class="modal-content bg-[#0e2030] border border-[#1b3146] rounded-lg p-6 flex flex-col gap-4 w-96 max-h-[80vh]">
+        <h3 class="text-lg font-semibold">Session Feedback</h3>
+        <div id="history-modal-content" class="flex-1 overflow-y-auto scrolling-panel pr-2"></div>
+        <button id="close-history-modal" class="chip bg-blue-800/50 justify-center">Close</button>
+      </div>`;
+    ui.modals.history = historyModal;
+
+    ui.root.append(appWrap, settingsModal, historyModal);
+
+    // Post-layout setup
+    const apiKeyInput = document.getElementById('modal-api-key');
+    apiKeyInput.value = appState.apiKey;
+    apiKeyInput.addEventListener('change', e => { appState.apiKey = e.target.value.trim(); saveState(); });
+    document.getElementById('close-settings-modal').addEventListener('click', () => toggleModal(ui.modals.settings, false));
+    document.getElementById('close-history-modal').addEventListener('click', () => toggleModal(ui.modals.history, false));
+
+    const tabButtons = { create: createTabBtn, refine: refineTabBtn };
+    const tabContents = { create: createTabContent, refine: refineTabContent };
     
-    appWrap.append(left, right);
-    ui.root.append(appWrap);
+    function switchTab(tab) {
+        appState.activeTab = tab;
+        Object.values(tabButtons).forEach(btn => btn.classList.remove('active'));
+        Object.values(tabContents).forEach(content => content.classList.remove('active'));
+        tabButtons[tab].classList.add('active');
+        tabContents[tab].classList.add('active');
+    }
+    
+    createTabBtn.addEventListener('click', () => switchTab('create'));
+    refineTabBtn.addEventListener('click', () => switchTab('refine'));
+    switchTab(appState.activeTab);
+
+    // Initial event listener attachment
+    left.addEventListener('click', handleControlsClick);
+    right.addEventListener('click', handleResultsPanelClick);
   }
 
-  function showToast(msg) {
-    const t = el('div','fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#0f2a41] px-4 py-2 rounded shadow text-sm fade');
+  function updateHistoryModal() {
+      const content = document.getElementById('history-modal-content');
+      content.innerHTML = '';
+
+      // Liked Names
+      const likedHeader = el('h4', 'font-semibold text-blue-300'); likedHeader.textContent = 'Liked Names (👍)';
+      content.append(likedHeader);
+      if(appState.likedNames.length > 0) {
+        const likedList = el('div', 'flex flex-wrap gap-2 mt-1 mb-4');
+        appState.likedNames.forEach(n => {
+          const chip = el('div', 'chip active'); chip.textContent = n.name;
+          likedList.append(chip);
+        });
+        content.append(likedList);
+      } else {
+        content.append(el('p', 'small-muted mb-4 italic text-sm'>'No names liked yet.'));
+      }
+      
+      // Disliked Names
+      const dislikedHeader = el('h4', 'font-semibold text-red-300'); dislikedHeader.textContent = 'Blacklisted Names (👎)';
+      content.append(dislikedHeader);
+      const blacklistInputWrap = el('div', 'flex gap-2 mt-2');
+      const blacklistInput = el('input', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
+      blacklistInput.placeholder = 'Add word to blacklist...';
+      const addBtn = createAddButton(() => {
+        const newWord = blacklistInput.value.trim().toLowerCase();
+        if (newWord && !appState.userBlacklist.includes(newWord)) {
+            appState.userBlacklist.push(newWord);
+            saveState(); updateHistoryModal();
+        }
+        blacklistInput.value = '';
+      });
+      blacklistInputWrap.append(blacklistInput, addBtn);
+      content.append(blacklistInputWrap);
+
+      if(appState.userBlacklist.length > 0) {
+        const dislikedList = el('div', 'flex flex-wrap gap-2 mt-2');
+        appState.userBlacklist.forEach(name => {
+          const chip = el('div', 'chip bg-red-900/50'); 
+          chip.innerHTML = `<span>${name}</span><button data-action="remove-blacklist" data-word="${name}" class="font-mono text-xs opacity-70">x</button>`;
+          dislikedList.append(chip);
+        });
+        content.append(dislikedList);
+        dislikedList.addEventListener('click', (e) => {
+          const removeBtn = e.target.closest('[data-action="remove-blacklist"]');
+          if (removeBtn) {
+            const wordToRemove = removeBtn.dataset.word;
+            appState.userBlacklist = appState.userBlacklist.filter(w => w !== wordToRemove);
+            saveState();
+            updateHistoryModal();
+            updateResultsPanel();
+          }
+        });
+      } else {
+         content.append(el('p', 'small-muted mt-2 italic text-sm'>'No names blacklisted yet.'));
+      }
+  }
+
+  function showToast(msg, type = 'info', duration = 2000) {
+    const t = el('div','fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded shadow text-sm fade');
+    if (type === 'error') { t.classList.add('bg-red-800', 'text-white'); } 
+    else if (type === 'success') { t.classList.add('bg-green-800', 'text-white'); }
+    else { t.classList.add('bg-[#0f2a41]'); }
     t.textContent = msg; document.body.appendChild(t);
-    setTimeout(()=> t.remove(), 1400);
+    setTimeout(()=> t.remove(), duration);
   }
 
   function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-  function buildSystemPrompt(task, gender, sessionHistory, outputAlphabet) {
+  function buildSystemPrompt(task, gender, sessionHistory) {
     const fullBlacklist = [...appState.userBlacklist];
+    const likedNames = appState.likedNames.map(n => n.name);
     const sessionMemoryInstruction = sessionHistory.length > 0
       ? `Avoid repeating or too closely resembling these session names: ${sessionHistory.join(', ')}. Instead, explore new combinations in a similar spirit.`
       : `This is the first generation of this session.`;
 
     return `
-You are the Cultural Coinage Agent — a poet-linguist, not a random generator. 
-Your craft is name-smithing: fusing cultural morphemes into new, resonant names that feel alive, meaningful, and poetic.
+You are the Cultural Coinage Agent — a poet-linguist. Your craft is name-smithing.
+
+CRITICAL RULE 1: LANGUAGE FUSION
+You MUST invent names by fusing morphemes from 2 or 3 DIFFERENT languages from the list provided in the TASK. 
+- At least two distinct language morphemes must appear in each 'roots' field breakdown.
+- DO NOT fuse morphemes from the same language (e.g., Turkish+Turkish).
+- DO NOT return a single, unmodified word from one language.
+- Mark any invented segments as (coined).
+
+CRITICAL RULE 2: LANGUAGE FIDELITY
+You MUST use morphemes ONLY from the languages specified in the TASK.
 
 PRINCIPLES:
-- Names are artifacts, not random strings. The 'meaning' and 'roots' fields must be distinct.
-- Use only morphemes and etymologies from the languages listed in TASK. Do not include other languages. If a gap exists, invent a new coined root marked as (coined).
-- Adapt with creativity: use phonological glue (connecting vowels, softened endings), and reshape roots for flow.
-- Balance sound and meaning: each name must have resonance and a story.
-- Roots Clarity: Spell out each part of the root, e.g., "astro (Greek: star) + ren (Nordic: raven)". This field is for the technical breakdown.
-- Meaning: This field is for a short, separate poetic interpretation of the name's feeling, NOT a repeat of the roots.
-- Style must follow the selected tone (lyrical, archaic, heroic, etc.).
+- 'meaning' and 'roots' fields must be distinct. Never return an empty 'meaning'.
+- Roots: The technical breakdown. Example: "sol (Latin, sun) + ren (Japanese, lotus)".
+- Meaning: A separate, short poetic interpretation of the name's feeling.
+- Gender Guidance:
+  - Male: favor consonant-final/strong clusters, firmer endings.
+  - Female: favor open syllables, vowel-rich endings and melodic cadence.
+  - Unisex: neutral balance; prefer flexible endings.
+- Variant Quality: Variants must have at least 50% phonetic overlap but avoid trivial respellings.
 
 SESSION CONTEXT:
 ${sessionMemoryInstruction}
-Blacklist: ${fullBlacklist.join(", ")}
-Contextual harmony: Consider sibling names, surnames, and gender preference.
-Gender Guidance:
-- Male: favor consonant-final/strong clusters, firmer endings.
-- Female: favor open syllables, vowel-rich endings and melodic cadence.
-- Unisex: neutral balance; prefer flexible endings.
-
-FINAL STEP (MANDATORY):
-After coining a name, you MUST transliterate it to the specified '${outputAlphabet}' alphabet. For example, Kıvanç becomes Kivanc, Sølvag becomes Solvag, Rónán becomes Ronan. The final 'name' in the JSON must use only '${outputAlphabet}' characters.
+User Feedback:
+- Inspirational (👍) Names: ${likedNames.length > 0 ? likedNames.join(', ') : 'None yet.'} Use as stylistic guides.
+- Blacklisted (👎) Names: ${fullBlacklist.length > 0 ? fullBlacklist.join(', ') : 'None yet.'} Avoid names with similar sounds/roots.
+- Phonetic Preference: ${appState.phoneticPreference}
+- Cultural Approach: ${appState.culturalApproach}
 
 OUTPUT FORMAT:
-Return ONLY a raw JSON array of objects, with no markdown or text wrapping. 
-Each object must look like this:
+Return ONLY a raw JSON array of objects. Do not include commentary.
 {
   "name": "Astren",
   "meaning": "A name that evokes cosmic guidance and strength",
   "roots": "astro (Greek: star) + ren (Nordic: raven)",
-  "cluster": "${appState.selectedStyle}"
+  "cluster": "${appState.selectedStyle}",
+  "pronunciation": "AS-tren",
+  "syllableCount": 2
 }
 
 TASK:
@@ -540,47 +764,83 @@ ${task}
     `;
   }
 
-  async function callGeminiOnce(prompt) {
+  async function callGeminiOnce(prompt, mode) {
     const key = appState.apiKey.trim();
-    if (!key) throw new Error('Missing API key.');
-    const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.8, maxOutputTokens: 1200, candidateCount: 1 } };
-    const res = await fetch(API_BASE_URL + '?key=' + encodeURIComponent(key), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const model = mode === 'quick' ? 'gemini-2.5-flash-lite' : 'gemini-pro';
+    const url = `${API_BASE_URL}${model}:generateContent`;
+
+    const body = { 
+      contents: [{ parts: [{ text: prompt }] }], 
+      generationConfig: { 
+        temperature: 0.85, maxOutputTokens: 1500, candidateCount: 1, topP: 0.95, topK: 40
+      } 
+    };
+    const res = await fetch(url + '?key=' + encodeURIComponent(key), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(`Gemini API error ${res.status}: ${await res.text()}`);
     const data = await res.json();
     return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
   }
 
-  async function doGenerate(mode = 'first', contextName = '') {
-    if (!appState.apiKey) {
-        appState.error = "Please enter your Gemini API key to begin."; updateResultsPanel(); return;
-    }
-    appState.error = null; appState.results = []; appState.rawApiResponse = null; appState.isLoading = true;
-    updateResultsPanel();
+  async function doGenerate(mode = 'diverse', contextName = '') {
+    appState.error = null; 
+    appState.results = []; 
+    appState.rawApiResponse = null;
+    appState.generationMode = mode === 'middle' || mode === 'variants' ? appState.generationMode : mode;
 
-    if (appState.sessionGeneratedNames.length > 30) {
-      appState.sessionGeneratedNames = appState.sessionGeneratedNames.slice(-30);
+    if (appState.sessionGeneratedNames.length > 100) {
+      appState.sessionGeneratedNames = appState.sessionGeneratedNames.slice(-100);
     }
-
+    
     let task;
     const allLangs = [...new Set([...appState.selectedLanguages, ...appState.userLanguages])];
+    const batchSize = appState.batchSize;
 
     if (mode === 'middle') {
         if (!appState.firstNameForMiddle) { appState.error = "Please provide a first name to generate middle names."; appState.isLoading = false; updateResultsPanel(); return; }
-        task = `Generate ${DEFAULT_COUNT} middle names for "${appState.firstNameForMiddle}" using morphemes exclusively from these languages: ${allLangs.join(', ')}. All names must embody the "${appState.selectedStyle}" style. Draw thematic inspiration from: ${appState.selectedThemes.join(', ')}.`;
+        task = `Generate ${batchSize} middle names for "${appState.firstNameForMiddle}" using morphemes from: ${allLangs.join(', ')}. Style: "${appState.selectedStyle}".`;
     } else if (mode === 'variants') {
-        task = `Generate ${DEFAULT_COUNT} variants of the name "${contextName}". These must have at least 50% phonetic overlap and not be simple respellings. Use morphemes from: ${allLangs.join(', ')} and embody the "${appState.selectedStyle}" style.`;
+        task = `Generate ${batchSize} variants of "${contextName}" with ≥50% phonetic overlap. Use morphemes from: ${allLangs.join(', ')}. Style: "${appState.selectedStyle}".`;
     } else if (appState.likedNames.length > 0) {
-        const likedStr = appState.likedNames.map(n => n.name).join(', ');
-        task = `Analyze these liked names: ${likedStr}. Generate ${DEFAULT_COUNT} new names that embody the "${appState.selectedStyle}" style using morphemes exclusively from these languages: ${allLangs.join(', ')}. Draw thematic inspiration from: ${appState.selectedThemes.join(', ')}.`;
-    } else {
-        task = `Generate ${DEFAULT_COUNT} original names that embody the "${appState.selectedStyle}" style using morphemes exclusively from these languages: ${allLangs.join(', ')}. Draw thematic inspiration from: ${appState.selectedThemes.join(', ')}.`;
+        const likedAnalysis = appState.likedNames.map(n => `${n.name} (${n.roots || 'unknown roots'})`).join('; ');
+        task = `Analyze liked names: ${likedAnalysis}. Generate ${batchSize} new names with similar qualities using morphemes from: ${allLangs.join(', ')}. Style: "${appState.selectedStyle}".`;
+    } else if (mode === 'diverse') {
+        task = `Generate ${batchSize} highly diverse names from: ${allLangs.join(', ')}. Vary phonetic patterns and cultural blends. Style: "${appState.selectedStyle}".`;
+    } else { // quick mode
+        task = `Generate ${batchSize} original names using morphemes from: ${allLangs.join(', ')}. Style: "${appState.selectedStyle}". Prioritize proven phonetic patterns for quick results.`;
     }
-    if (appState.siblingNames) task += ` Harmonize stylistically with existing siblings: ${appState.siblingNames.join(', ')}.`;
+    if (appState.siblingNames) task += ` Harmonize with siblings: ${appState.siblingNames}.`;
     if (appState.surname) task += ` Consider compatibility with surname: ${appState.surname}.`;
     
-    let prompt = buildSystemPrompt(task, appState.gender, appState.sessionGeneratedNames, appState.outputAlphabet);
+    let prompt = buildSystemPrompt(task, appState.gender, appState.sessionGeneratedNames.slice(-20));
+    
+    if (!appState.apiKey) {
+        ui.results.panel.innerHTML = `
+            <div class="bg-[#081426] border border-[#123047] rounded p-4 flex flex-col gap-2">
+                <h3 class="text-md font-semibold text-blue-300">API Key Missing</h3>
+                <p class="small-muted">The prompt below has been generated for you to use in your own LLM. <a href="https://aistudio.google.com/app" target="_blank" class="debug">Open Gemini Studio</a></p>
+                <pre class="debug-panel bg-[#0b1622] border border-[#223447] rounded p-2 text-xs mt-2 whitespace-pre-wrap">${escapeHtml(prompt)}</pre>
+                <button class="chip mt-2 self-start" data-action="copy-prompt">Copy Prompt</button>
+            </div>
+        `;
+        return; 
+    }
+
+    appState.isLoading = true;
+    let progressInterval = null;
+    if(appState.isLoading) {
+      let progress = 0;
+      updateResultsPanel();
+      const fill = ui.results.panel.querySelector('.progress-fill');
+      if (fill) {
+        progressInterval = setInterval(() => {
+          progress += 10;
+          fill.style.width = Math.min(progress, 90) + '%';
+        }, 200);
+      }
+    }
+
     try {
-        const raw = await callGeminiOnce(prompt);
+        const raw = await callGeminiOnce(prompt, appState.generationMode);
         appState.rawApiResponse = raw;
         const parsed = parseApiResponse(raw);
         
@@ -593,25 +853,60 @@ ${task}
         if (!appState.results.length) {
             appState.error = "No names could be parsed from the model output. Raw response saved below for debugging.";
         }
+        showToast(`Generated ${appState.results.length} new names!`, 'success');
     } catch (err) {
       console.error('Generation error:', err);
       appState.error = err.message || String(err);
+      showToast('Generation failed. Check API key and connection.', 'error');
     } finally {
       appState.isLoading = false;
+      if(progressInterval) clearInterval(progressInterval);
       updateResultsPanel();
     }
   }
 
   function exportCSV() {
-    if (!appState.results.length) { showToast('No results'); return; }
-    const header = ['Name','Meaning','Roots','Cluster'];
-    const rows = appState.results.map(r => [`"${r.name.replace(/"/g,'""')}"`,`"${(r.meaning||'').replace(/"/g,'""')}"`,`"${(r.roots||'').replace(/"/g,'""')}"`, `"${r.cluster.replace(/"/g,'""')}"`].join(','));
-    const csv = [header.join(','), ...rows].join('\r\n');
-    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
-    const url = URL.createObjectURL(blob);
-    const a = el('a'); a.href = url; a.download = `cultural-coinage-${Date.now()}.csv`;
-    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-    showToast('Exported CSV');
+    if (!appState.results.length) { showToast('No results', 'error'); return; }
+    const dataToExport = {
+      metadata: {
+        exported: new Date().toISOString(),
+        totalNames: appState.results.length,
+        likedNamesCount: appState.likedNames.length,
+        languages: [...new Set([...appState.selectedLanguages, ...appState.userLanguages])],
+        themes: appState.selectedThemes,
+        style: appState.selectedStyle,
+        preferences: {
+          phonetic: appState.phoneticPreference,
+          cultural: appState.culturalApproach,
+        }
+      },
+      names: appState.results
+    };
+    
+    const csvContent = "data:text/csv;charset=utf-8," + 
+      ["Name", "Meaning", "Roots", "Cluster", "Pronunciation", "Syllables"].join(",") + "\n" +
+      appState.results.map(r => [
+        `"${r.name.replace(/"/g, '""')}"`,
+        `"${(r.meaning || '').replace(/"/g, '""')}"`,
+        `"${(r.roots || '').replace(/"/g, '""')}"`,
+        `"${r.cluster.replace(/"/g, '""')}"`,
+        `"${r.pronunciation || ''}"`,
+        r.syllableCount || 0
+      ].join(",")).join("\n");
+
+    const jsonContent = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(dataToExport, null, 2));
+
+    const exportWrapper = el('div', 'fixed inset-0 bg-black/50 flex items-center justify-center fade');
+    const exportModal = el('div', 'bg-[#0e2030] border border-[#1b3146] rounded-lg p-6 flex flex-col gap-4 w-96');
+    exportModal.innerHTML = `<h3 class="text-lg font-semibold">Export Options</h3><p class="small-muted">Export the current results as a CSV or a detailed JSON file.</p>`;
+    const csvBtn = el('a', 'chip text-center justify-center'); csvBtn.textContent = 'Download CSV'; csvBtn.href = csvContent; csvBtn.download = `morpheme-studio-export-${Date.now()}.csv`;
+    const jsonBtn = el('a', 'chip text-center justify-center'); jsonBtn.textContent = 'Download JSON'; jsonBtn.href = jsonContent; jsonBtn.download = `morpheme-studio-export-${Date.now()}.json`;
+    const closeBtn = el('button', 'chip bg-red-800/50 justify-center'); closeBtn.textContent = 'Close';
+    closeBtn.addEventListener('click', () => exportWrapper.remove());
+
+    exportModal.append(csvBtn, jsonBtn, closeBtn);
+    exportWrapper.append(exportModal);
+    document.body.append(exportWrapper);
   }
 
   // --- Init ---
