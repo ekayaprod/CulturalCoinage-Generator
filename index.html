@@ -50,13 +50,19 @@
   <script>
 (function () {
   // --- CONFIG ---
-  const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
-  const APP_VERSION = "3.7";
+  const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/";
+  const APP_VERSION = "3.8";
   const DEFAULT_COUNT = 8;
   const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Japanese","Greek","Spanish","Irish"];
   const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music", "Fire", "Mountain", "Ocean", "Sky", "Forest", "Mythic"];
   const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant", "Elegant & Refined", "Grounded & Earthy", "Mystical & Ethereal"];
-  const MODEL_OPTIONS = ["gemini-2.5-pro", "gemini-2.5-pro-preview-06-05", "gemini-2.5-flash", "gemini-1.5-pro"];
+  // IMPLEMENTATION: Add descriptive labels for models.
+  const MODEL_OPTIONS = [
+    { value: "models/gemini-2.5-pro", text: "2.5 Pro (Highest Quality)" },
+    { value: "models/gemini-2.5-pro-preview-06-05", text: "2.5 Pro Preview (Latest)" },
+    { value: "models/gemini-2.5-flash", text: "2.5 Flash (Fast & Balanced)" },
+    { value: "models/gemini-1.5-pro", text: "1.5 Pro (Legacy)" }
+  ];
 
   // --- State ---
   const appState = {
@@ -77,7 +83,7 @@
     userBlacklist: [],
     rawApiResponse: null,
     sessionGeneratedNames: [],
-    model: "gemini-2.5-pro", // FIX: Default to 2.5 Pro
+    model: "models/gemini-2.5-pro",
     outputAlphabet: "English (Default)",
   };
   
@@ -133,7 +139,7 @@
                 culturalApproach: undefined, generationMode: undefined,
               };
             }
-            const defaults = { likedNames: [], userLanguages: [], userBlacklist: [], gender: "Unisex", outputAlphabet: "English (Default)", model: "gemini-2.5-pro" };
+            const defaults = { likedNames: [], userLanguages: [], userBlacklist: [], gender: "Unisex", outputAlphabet: "English (Default)", model: "models/gemini-2.5-pro" };
             Object.assign(appState, { ...defaults, ...parsed });
         }
       } catch (e) { console.warn("Could not load state from localStorage:", e); }
@@ -220,6 +226,17 @@
     updateChipSelector(ui.controls.languageChips, [...new Set([...LANG_OPTIONS, ...appState.userLanguages])]);
     updateChipSelector(ui.controls.themeChips, THEME_OPTIONS);
     ui.controls.generateButton.textContent = appState.firstNameForMiddle ? 'Generate Middle Names' : (appState.likedNames.length > 0 ? 'Riff on Liked' : 'Generate Names');
+    updateGenerateButtonState();
+  }
+
+  // IMPLEMENTATION: Add function to enable/disable generate button.
+  function updateGenerateButtonState() {
+    const isReady = appState.selectedLanguages.length >= 2 && appState.selectedThemes.length >= 1;
+    if (ui.controls.generateButton) {
+      ui.controls.generateButton.disabled = !isReady;
+      ui.controls.generateButton.classList.toggle('opacity-50', !isReady);
+      ui.controls.generateButton.classList.toggle('cursor-not-allowed', !isReady);
+    }
   }
 
   function updateChipSelector(container, options) {
@@ -284,7 +301,7 @@
       actions.innerHTML = `
         <button class="chip" data-action="copy-name" data-name="${item.name}">Copy</button>
         <button class="chip thumb-btn ${isLiked ? 'active' : ''}" data-action="thumb-up" data-name="${item.name}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M7.247 4.86c.13-.25.39-.41.683-.41h1.146c.293 0 .553.16.683.41l1.838 3.515.01.011c.144.293.183.626.107.926-.076.3-.26.555-.504.708l-1.353.768c-.294.167-.655.158-.94-.02l-1.92-1.077c-.39-.218-.553-.69-.37-1.082l1.63-3.232z"/><path d="M8.864 1.34c.338 0 .64.19.782.493l1.838 3.515.01.011c.144.293.183.626.107.926-.076.3-.26.555-.504.708l-1.353.768c-.294.167-.655.158-.94-.02l-1.92-1.077c-.39-.218-.553-.69-.37-1.082L8.082 1.833c.142-.304.444-.493.782-.493zM14 13.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 13.5v-9A1.5 1.5 0 0 1 3.5 3H4a.5.5 0 0 1 0 1h-.5A.5.5 0 0 0 3 4.5v9a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 1 1 0v1z"/></svg></button>
-        <button class="chip thumb-btn ${isDisliked ? 'active' : ''}" data-action="thumb-down" data-name="${item.name}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M7.247 11.14c.13.25.39.41.683.41h1.146c.293 0 .553-.16.683-.41l1.838-3.515.01-.011c.144-.293.183-.626.107.926-.076-.3-.26-.555-.504-.708L12.02 5.25c-.294-.167-.655-.158-.94.02l-1.92 1.077c-.39.218-.553-.69-.37 1.082l1.63 3.232z"/><path d="M8.864 14.66c.338 0 .64-.19.782-.493l1.838-3.515.01-.011c.144-.293.183-.626.107.926-.076-.3-.26-.555-.504-.708l-1.353-.768c-.294-.167-.655-.158-.94.02l-1.92 1.077c-.39.218-.553-.69-.37 1.082l1.63 3.232c.142.304.444.493.782.493zM14 2.5a1.5 1.5 0 0 0-1.5-1.5h-9A1.5 1.5 0 0 0 2 2.5v9A1.5 1.5 0 0 0 3.5 13H4a.5.5 0 0 0 0-1h-.5a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 .5.5v1a.5.5 0 0 0 1 0v-1z"/></svg></button>
+        <button class="chip thumb-btn ${isDisliked ? 'active' : ''}" data-action="thumb-down" data-name="${item.name}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M7.247 11.14c.13.25.39.41.683.41h1.146c.293 0 .553-.16.683.41l1.838-3.515.01-.011c.144-.293.183-.626.107.926-.076-.3-.26-.555-.504-.708L12.02 5.25c-.294-.167-.655-.158-.94.02l-1.92 1.077c-.39.218-.553-.69-.37 1.082l1.63 3.232z"/><path d="M8.864 14.66c.338 0 .64.19.782-.493l1.838-3.515.01-.011c.144-.293.183-.626.107.926-.076-.3-.26-.555-.504-.708l-1.353-.768c-.294-.167-.655-.158-.94.02l-1.92 1.077c-.39-.218-.553-.69-.37 1.082l1.63 3.232c.142.304.444.493.782.493zM14 2.5a1.5 1.5 0 0 0-1.5-1.5h-9A1.5 1.5 0 0 0 2 2.5v9A1.5 1.5 0 0 0 3.5 13H4a.5.5 0 0 0 0-1h-.5a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 .5.5v1a.5.5 0 0 0 1 0v-1z"/></svg></button>
         <button class="chip" data-action="variants" data-name="${item.name}">Variants</button>`;
       
       card.append(header, meaningEl, rootsEl, metaRow, actions);
@@ -318,13 +335,19 @@
     return section;
   }
   
+  // IMPLEMENTATION: Update select control to handle descriptive text.
   function createSelectControl(options, selectedValue, changeHandler) {
       const select = el('select', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
       options.forEach(opt => {
           const optionEl = el('option');
-          optionEl.value = opt;
-          optionEl.textContent = opt;
-          if (opt === selectedValue) optionEl.selected = true;
+          if (typeof opt === 'object') {
+            optionEl.value = opt.value;
+            optionEl.textContent = opt.text;
+          } else {
+            optionEl.value = opt;
+            optionEl.textContent = opt;
+          }
+          if (optionEl.value === selectedValue) optionEl.selected = true;
           select.append(optionEl);
       });
       select.addEventListener('change', changeHandler);
@@ -533,7 +556,6 @@
         if (e.target.value.trim() && !e.target.value.trim().startsWith('AIza')) showToast('Warning: Invalid API key format.', true);
     });
     
-    // FIX: Add model selector dropdown to settings
     const modelSel = createSelectControl(MODEL_OPTIONS, appState.model, e => { appState.model = e.target.value; debouncedSaveState(); });
 
     const alphabetOptions = ['English (Default)', 'English (Simplified/No Accents)'];
@@ -609,7 +631,9 @@
           },
           onRemove: (item) => {
               appState.userBlacklist = appState.userBlacklist.filter(w => w !== item);
-              debouncedSaveState(); updateHistoryModal(); updateResultsPanel();
+              debouncedSaveState(); 
+              // Do not re-render main panel to avoid disrupting user flow, per QA feedback.
+              updateHistoryModal();
           }
       });
       content.append(likedContainer, dislikedContainer);
@@ -656,8 +680,7 @@ ${task}
         appState.error = "API Key is missing. Please add it in the settings.";
         return null;
     }
-    // FIX: Use the model from appState
-    const model = appState.model || "gemini-2.5-pro";
+    const model = appState.model || "models/gemini-2.5-pro";
     const url = `${API_BASE_URL}${model}:generateContent`;
     const body = { 
       contents: [{ parts: [{ text: prompt }] }], 
@@ -670,6 +693,11 @@ ${task}
   }
 
   async function doGenerate(context = {}) {
+    // IMPLEMENTATION: Enforce minimum selection criteria.
+    if (appState.selectedLanguages.length < 2 || appState.selectedThemes.length < 1) {
+      showToast("Please select at least 2 languages and 1 theme.", true);
+      return;
+    }
     appState.error = null; appState.results = []; appState.rawApiResponse = null;
     if (appState.sessionGeneratedNames.length > 20) appState.sessionGeneratedNames = appState.sessionGeneratedNames.slice(-20);
     
@@ -720,7 +748,6 @@ ${task}
     } catch (err) {
       console.error('Generation error:', err);
       appState.error = err.message || String(err);
-      // FIX: Add specific error guidance for 404 errors.
       if (err.message && (err.message.includes('404') || err.message.includes('Not found'))) {
         showToast("The selected model may not be enabled for your API key. Try switching models in Settings.", true);
       } else {
