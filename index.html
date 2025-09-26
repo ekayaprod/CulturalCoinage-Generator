@@ -652,7 +652,8 @@ ${task}
         appState.error = "API Key is missing. Please add it in the settings.";
         return null;
     }
-    const model = 'gemini-pro';
+    // UPDATE: Switched to the 2.5 Pro model for maximum quality and rule adherence.
+    const model = 'gemini-2.5-pro';
     const url = `${API_BASE_URL}${model}:generateContent`;
     const body = { 
       contents: [{ parts: [{ text: prompt }] }], 
@@ -732,4 +733,8 @@ ${task}
   </script>
 </body>
 </html>
+
+
+
+
 
