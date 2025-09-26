@@ -51,12 +51,11 @@
 (function () {
   // --- CONFIG ---
   const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/";
-  const APP_VERSION = "3.8";
+  const APP_VERSION = "3.9";
   const DEFAULT_COUNT = 8;
   const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Japanese","Greek","Spanish","Irish"];
   const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music", "Fire", "Mountain", "Ocean", "Sky", "Forest", "Mythic"];
   const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant", "Elegant & Refined", "Grounded & Earthy", "Mystical & Ethereal"];
-  // IMPLEMENTATION: Add descriptive labels for models.
   const MODEL_OPTIONS = [
     { value: "models/gemini-2.5-pro", text: "2.5 Pro (Highest Quality)" },
     { value: "models/gemini-2.5-pro-preview-06-05", text: "2.5 Pro Preview (Latest)" },
@@ -229,7 +228,6 @@
     updateGenerateButtonState();
   }
 
-  // IMPLEMENTATION: Add function to enable/disable generate button.
   function updateGenerateButtonState() {
     const isReady = appState.selectedLanguages.length >= 2 && appState.selectedThemes.length >= 1;
     if (ui.controls.generateButton) {
@@ -335,7 +333,6 @@
     return section;
   }
   
-  // IMPLEMENTATION: Update select control to handle descriptive text.
   function createSelectControl(options, selectedValue, changeHandler) {
       const select = el('select', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
       options.forEach(opt => {
@@ -431,10 +428,14 @@
           showToast('Copied Parsed JSON!');
           break;
         case 'copy-prompt':
-          const pre = event.target.closest('.flex-col').querySelector('pre');
-          if (pre) {
+          // The selector needs to be robust enough to find the <pre> tag within the results panel.
+          const preContainer = event.target.closest('.flex-col, .bg-\\[\\#081426\\]');
+          if (preContainer) {
+            const pre = preContainer.querySelector('pre');
+            if (pre) {
               navigator.clipboard.writeText(pre.textContent);
               showToast('Prompt Copied!');
+            }
           }
           break;
       }
@@ -632,7 +633,6 @@
           onRemove: (item) => {
               appState.userBlacklist = appState.userBlacklist.filter(w => w !== item);
               debouncedSaveState(); 
-              // Do not re-render main panel to avoid disrupting user flow, per QA feedback.
               updateHistoryModal();
           }
       });
@@ -676,10 +676,7 @@ ${task}
 
   async function callGeminiOnce(prompt) {
     const key = appState.apiKey.trim();
-    if (!key) {
-        appState.error = "API Key is missing. Please add it in the settings.";
-        return null;
-    }
+    // Note: The check for the key is now handled in doGenerate() to allow for prompt-only generation.
     const model = appState.model || "models/gemini-2.5-pro";
     const url = `${API_BASE_URL}${model}:generateContent`;
     const body = { 
@@ -693,7 +690,6 @@ ${task}
   }
 
   async function doGenerate(context = {}) {
-    // IMPLEMENTATION: Enforce minimum selection criteria.
     if (appState.selectedLanguages.length < 2 || appState.selectedThemes.length < 1) {
       showToast("Please select at least 2 languages and 1 theme.", true);
       return;
@@ -719,6 +715,21 @@ ${task}
     
     const prompt = buildSystemPrompt(task, appState.gender, appState.sessionGeneratedNames);
     
+    // FIX: Restore prompt generation for users without an API key.
+    if (!appState.apiKey) {
+        const escapedPrompt = String(prompt).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        ui.results.panel.innerHTML = `
+            <div class="bg-[#081426] border border-[#123047] rounded p-4 flex flex-col gap-2">
+                <h3 class="text-md font-semibold text-blue-300">API Key Missing</h3>
+                <p class="small-muted">The prompt below has been generated. Copy it to use in your preferred LLM tool, like Google AI Studio.</p>
+                <pre class="debug-panel bg-[#0b1622] border border-[#223447] rounded p-2 text-xs mt-2 whitespace-pre-wrap">${escapedPrompt}</pre>
+                <button class="chip mt-2 self-start" data-action="copy-prompt">Copy Prompt</button>
+            </div>
+        `;
+        updateDebugViewer(); // Clear any previous raw API response.
+        return;
+    }
+
     appState.isLoading = true;
     let progressInterval = null;
     let progress = 0;
