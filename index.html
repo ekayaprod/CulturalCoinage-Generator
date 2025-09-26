@@ -51,11 +51,12 @@
 (function () {
   // --- CONFIG ---
   const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
-  const APP_VERSION = "3.6";
+  const APP_VERSION = "3.7";
   const DEFAULT_COUNT = 8;
   const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Japanese","Greek","Spanish","Irish"];
   const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music", "Fire", "Mountain", "Ocean", "Sky", "Forest", "Mythic"];
   const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant", "Elegant & Refined", "Grounded & Earthy", "Mystical & Ethereal"];
+  const MODEL_OPTIONS = ["gemini-2.5-pro", "gemini-2.5-pro-preview-06-05", "gemini-2.5-flash", "gemini-1.5-pro"];
 
   // --- State ---
   const appState = {
@@ -76,6 +77,7 @@
     userBlacklist: [],
     rawApiResponse: null,
     sessionGeneratedNames: [],
+    model: "gemini-2.5-pro", // FIX: Default to 2.5 Pro
     outputAlphabet: "English (Default)",
   };
   
@@ -101,12 +103,11 @@
 
   const debouncedSaveState = debounce(saveState, 500);
 
-  // IMPLEMENTATION: Simplified toast system.
   const showToast = (msg, isError = false) => {
     const t = el('div', `fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded shadow text-sm fade ${isError ? 'bg-red-800' : 'bg-[#0f2a41]'} text-white`);
     t.textContent = msg;
     document.body.appendChild(t);
-    setTimeout(() => t.remove(), 2200);
+    setTimeout(() => t.remove(), 3000);
   };
   
   function saveState() {
@@ -124,7 +125,6 @@
         const saved = localStorage.getItem('morphemeStudioState');
         if (saved) {
             let parsed = JSON.parse(saved);
-            // IMPLEMENTATION: Inlined migrateOldState function.
             if (!parsed.version || parsed.version < APP_VERSION) {
               parsed = {
                 ...parsed,
@@ -133,13 +133,12 @@
                 culturalApproach: undefined, generationMode: undefined,
               };
             }
-            const defaults = { likedNames: [], userLanguages: [], userBlacklist: [], gender: "Unisex", outputAlphabet: "English (Default)" };
+            const defaults = { likedNames: [], userLanguages: [], userBlacklist: [], gender: "Unisex", outputAlphabet: "English (Default)", model: "gemini-2.5-pro" };
             Object.assign(appState, { ...defaults, ...parsed });
         }
       } catch (e) { console.warn("Could not load state from localStorage:", e); }
   }
 
-  // IMPLEMENTATION: Parser simplified, removing regex fallback for size reduction.
   function parseApiResponse(text) {
     if (!text) return [];
     let cleanedText = text
@@ -153,10 +152,10 @@
       if (Array.isArray(parsed)) return parsed;
       if (parsed.names && Array.isArray(parsed.names)) return parsed.names;
       if (typeof parsed === "object") return Object.values(parsed).flat();
-      return []; // Return empty if format is unexpected
+      return [];
     } catch (e) {
       console.warn("JSON parse failed:", e);
-      return []; // Return empty on failure
+      return [];
     }
   }
 
@@ -171,7 +170,6 @@
       let cluster = (it.cluster || "").toString().trim() || appState.selectedStyle;
 
       if (!name) return null;
-      // IMPLEMENTATION: Inlined transliterate function.
       if (appState.outputAlphabet === 'English (Simplified/No Accents)') { 
         name = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       }
@@ -286,7 +284,7 @@
       actions.innerHTML = `
         <button class="chip" data-action="copy-name" data-name="${item.name}">Copy</button>
         <button class="chip thumb-btn ${isLiked ? 'active' : ''}" data-action="thumb-up" data-name="${item.name}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M7.247 4.86c.13-.25.39-.41.683-.41h1.146c.293 0 .553.16.683.41l1.838 3.515.01.011c.144.293.183.626.107.926-.076.3-.26.555-.504.708l-1.353.768c-.294.167-.655.158-.94-.02l-1.92-1.077c-.39-.218-.553-.69-.37-1.082l1.63-3.232z"/><path d="M8.864 1.34c.338 0 .64.19.782.493l1.838 3.515.01.011c.144.293.183.626.107.926-.076.3-.26.555-.504.708l-1.353.768c-.294.167-.655.158-.94-.02l-1.92-1.077c-.39-.218-.553-.69-.37-1.082L8.082 1.833c.142-.304.444-.493.782-.493zM14 13.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 13.5v-9A1.5 1.5 0 0 1 3.5 3H4a.5.5 0 0 1 0 1h-.5A.5.5 0 0 0 3 4.5v9a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 1 1 0v1z"/></svg></button>
-        <button class="chip thumb-btn ${isDisliked ? 'active' : ''}" data-action="thumb-down" data-name="${item.name}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M7.247 11.14c.13.25.39.41.683.41h1.146c.293 0 .553-.16.683-.41l1.838-3.515.01-.011c.144-.293.183-.626.107-.926-.076-.3-.26-.555-.504-.708L12.02 5.25c-.294-.167-.655-.158-.94.02l-1.92 1.077c-.39.218-.553-.69-.37 1.082l1.63 3.232z"/><path d="M8.864 14.66c.338 0 .64-.19.782-.493l1.838-3.515.01-.011c.144-.293.183-.626.107-.926-.076-.3-.26-.555-.504-.708l-1.353-.768c-.294-.167-.655-.158-.94.02l-1.92 1.077c-.39.218-.553-.69-.37 1.082l1.63 3.232c.142.304.444.493.782.493zM14 2.5a1.5 1.5 0 0 0-1.5-1.5h-9A1.5 1.5 0 0 0 2 2.5v9A1.5 1.5 0 0 0 3.5 13H4a.5.5 0 0 0 0-1h-.5a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 .5.5v1a.5.5 0 0 0 1 0v-1z"/></svg></button>
+        <button class="chip thumb-btn ${isDisliked ? 'active' : ''}" data-action="thumb-down" data-name="${item.name}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M7.247 11.14c.13.25.39.41.683.41h1.146c.293 0 .553-.16.683-.41l1.838-3.515.01-.011c.144-.293.183-.626.107.926-.076-.3-.26-.555-.504-.708L12.02 5.25c-.294-.167-.655-.158-.94.02l-1.92 1.077c-.39.218-.553-.69-.37 1.082l1.63 3.232z"/><path d="M8.864 14.66c.338 0 .64-.19.782-.493l1.838-3.515.01-.011c.144-.293.183-.626.107.926-.076-.3-.26-.555-.504-.708l-1.353-.768c-.294-.167-.655-.158-.94.02l-1.92 1.077c-.39.218-.553-.69-.37 1.082l1.63 3.232c.142.304.444.493.782.493zM14 2.5a1.5 1.5 0 0 0-1.5-1.5h-9A1.5 1.5 0 0 0 2 2.5v9A1.5 1.5 0 0 0 3.5 13H4a.5.5 0 0 0 0-1h-.5a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 .5.5v1a.5.5 0 0 0 1 0v-1z"/></svg></button>
         <button class="chip" data-action="variants" data-name="${item.name}">Variants</button>`;
       
       card.append(header, meaningEl, rootsEl, metaRow, actions);
@@ -419,7 +417,6 @@
       }
   }
   
-  // IMPLEMENTATION: Consolidated modal creation logic.
   function createModal(title, contentId, closeId) {
     const modal = el('div', 'modal-backdrop items-center justify-center');
     modal.innerHTML = `
@@ -440,7 +437,6 @@
     header.innerHTML = `<div><h1 class="text-xl font-semibold">Morpheme Studio</h1><div class="small-muted mt-1">Craft a name with meaning</div></div>`;
     const settingsWrap = el('div', 'flex items-center gap-2');
     const settingsBtn = el('button', 'chip');
-    // FIX: Corrected the negative sign in the SVG path data for the settings icon.
     settingsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311a1.464 1.464 0 0 1-.872 2.105l-.34.1c-1.4.413 1.4 2.397 0-2.81l-.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413-1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/></svg>`;
     settingsBtn.addEventListener('click', () => toggleModal(ui.modals.settings, true));
     
@@ -536,10 +532,18 @@
     apiKeyInput.addEventListener('change', e => { 
         if (e.target.value.trim() && !e.target.value.trim().startsWith('AIza')) showToast('Warning: Invalid API key format.', true);
     });
+    
+    // FIX: Add model selector dropdown to settings
+    const modelSel = createSelectControl(MODEL_OPTIONS, appState.model, e => { appState.model = e.target.value; debouncedSaveState(); });
+
     const alphabetOptions = ['English (Default)', 'English (Simplified/No Accents)'];
     const alphabetSel = createSelectControl(alphabetOptions, appState.outputAlphabet, e => { appState.outputAlphabet = e.target.value; debouncedSaveState(); });
     const settingsContent = ui.modals.settings.querySelector('#settings-modal-content');
-    settingsContent.append(createControlSection('Gemini API Key', apiKeyInput), createControlSection('Output Character Set', alphabetSel));
+    settingsContent.append(
+        createControlSection('Gemini API Key', apiKeyInput), 
+        createControlSection('Generation Model', modelSel),
+        createControlSection('Output Character Set', alphabetSel)
+    );
     
     document.getElementById('close-settings-modal').addEventListener('click', () => toggleModal(ui.modals.settings, false));
     document.getElementById('close-history-modal').addEventListener('click', () => toggleModal(ui.modals.history, false));
@@ -652,8 +656,8 @@ ${task}
         appState.error = "API Key is missing. Please add it in the settings.";
         return null;
     }
-    // UPDATE: Switched to the 2.5 Pro model for maximum quality and rule adherence.
-    const model = 'gemini-2.5-pro';
+    // FIX: Use the model from appState
+    const model = appState.model || "gemini-2.5-pro";
     const url = `${API_BASE_URL}${model}:generateContent`;
     const body = { 
       contents: [{ parts: [{ text: prompt }] }], 
@@ -716,7 +720,12 @@ ${task}
     } catch (err) {
       console.error('Generation error:', err);
       appState.error = err.message || String(err);
-      showToast('Generation failed. Check API key and connection.', true);
+      // FIX: Add specific error guidance for 404 errors.
+      if (err.message && (err.message.includes('404') || err.message.includes('Not found'))) {
+        showToast("The selected model may not be enabled for your API key. Try switching models in Settings.", true);
+      } else {
+        showToast('Generation failed. Check API key and connection.', true);
+      }
     } finally {
       appState.isLoading = false;
       if(progressInterval) clearInterval(progressInterval);
@@ -733,8 +742,4 @@ ${task}
   </script>
 </body>
 </html>
-
-
-
-
 
