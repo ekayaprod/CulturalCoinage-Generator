@@ -11,7 +11,6 @@
   <style>
     body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; background:#071022; color:#E6EEF9; }
     .scrolling-panel::-webkit-scrollbar{ width:10px } .scrolling-panel::-webkit-scrollbar-thumb{ background:#213449; border-radius:8px }
-    /* FIX: Added missing toast animation */
     .fade { animation: fade 220ms ease-out; } 
     @keyframes fade{ from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
     .chip { padding:6px 10px; border-radius:999px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.03); cursor:pointer; user-select:none; display: inline-flex; align-items: center; gap: 4px; }
@@ -34,6 +33,8 @@
     .toggle-switch-label:after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: #fff; border-radius: 90px; transition: 0.2s; }
     .toggle-switch-input:checked + .toggle-switch-label { background: #2563eb; }
     .toggle-switch-input:checked + .toggle-switch-label:after { left: calc(100% - 2px); transform: translateX(-100%); }
+    details > summary { list-style: none; }
+    details > summary::-webkit-details-marker { display: none; }
   </style>
 </head>
 <body>
@@ -43,7 +44,7 @@
 (function () {
   // --- CONFIG ---
   const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/";
-  const APP_VERSION = "8.3"; // Production ready build
+  const APP_VERSION = "8.5"; // Fix Harmonizer prompt
   const DEFAULT_COUNT = 8;
   const API_TIMEOUT_MS = 30000;
   const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Japanese","Greek","Spanish","Irish", "Russian", "Korean", "English"];
@@ -55,6 +56,7 @@
     { value: "models/gemini-2.5-flash", text: "2.5 Flash (Fast & Balanced)" },
     { value: "models/gemini-1.5-pro", text: "1.5 Pro (Legacy)" }
   ];
+  const ALPHABET_OPTIONS = ['English (Default)', 'English (Simplified/No Accents)'];
 
   // --- State ---
   const appState = {
@@ -75,6 +77,7 @@
         selectedStyle: "Lyrical & Melodic",
         gender: "Unisex",
         model: "models/gemini-2.5-pro",
+        outputAlphabet: "English (Default)",
         surname: "",
         siblingNames: "",
         firstNameForMiddle: "",
@@ -120,7 +123,7 @@
         userBlacklist: appState.userBlacklist,
         options: appState.options
     };
-    localStorage.setItem('nameForgeState_v8.3', JSON.stringify(minimalState));
+    localStorage.setItem('nameForgeState_v8.5', JSON.stringify(minimalState));
   }, 1500);
 
   const stateManager = {
@@ -136,8 +139,7 @@
         if (appState.options.mode === mode) return;
         this.setOption('mode', mode);
         const isForge = mode === 'forge';
-        ui.controls.themesSection.style.display = isForge ? '' : 'none';
-        ui.controls.styleSection.style.display = isForge ? '' : 'none';
+        ui.controls.flavorSection.style.display = isForge ? '' : 'none';
         ui.controls.advancedContextSection.style.display = isForge ? '' : 'none';
         ui.controls.harmonizerToggleSection.style.display = isForge ? 'none' : 'flex';
         document.querySelectorAll('.mode-toggle .chip').forEach(c => c.classList.remove('active'));
@@ -201,7 +203,7 @@
   
   function loadState() {
       try {
-        const saved = localStorage.getItem('nameForgeState_v8.3');
+        const saved = localStorage.getItem('nameForgeState_v8.5');
         if (saved) {
             const parsed = JSON.parse(saved);
             Object.assign(appState.options, parsed.options);
@@ -295,7 +297,6 @@
     if (!text) return [];
     try {
         const parsed = JSON.parse(text);
-        // FIX: Improve parsing robustness
         return parsed.names || parsed || [];
     } catch {
         const match = text.match(/\[.*\]/s);
@@ -309,6 +310,9 @@
     return rawArray.map(it => {
       let name = (it.name || "").toString().trim();
       if (!name) return null;
+      if (appState.options.outputAlphabet === 'English (Simplified/No Accents)') { 
+        name = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      }
       const base = { name, liked: false };
       if (appState.options.mode === 'forge') {
           return { ...base,
@@ -374,7 +378,6 @@
     }
 
     const actions = el('div', 'flex gap-2 mt-auto pt-2');
-    // FIX: Add toast feedback to copy button
     actions.appendChild(createChip({ text: 'Copy', onClick: () => { navigator.clipboard.writeText(item.name); showToast('Copied!'); } }));
     if (appState.options.mode === 'forge') {
         actions.appendChild(createChip({ text: '👍', classes: ['like-btn', item.liked ? 'active' : ''], onClick: () => stateManager.toggleLike(item.name) }));
@@ -387,7 +390,6 @@
   function updateHistoryModal() {
     const content = ui.modals.history.querySelector('.scrolling-panel');
     content.innerHTML = '';
-
     const createSection = (title, items, renderFunc) => {
         if (!items || items.length === 0) return el('div');
         const section = el('div', 'mb-4');
@@ -397,30 +399,19 @@
         section.append(list);
         return section;
     };
-    
     content.append(createSection(`👍 Liked Names (${appState.likedNames.length})`, appState.likedNames, (item) => {
         const div = el('div', 'bg-[#0a1a2e] rounded p-2 text-sm');
         div.innerHTML = `<div class="font-medium">${item.name}</div><div class="text-xs small-muted italic mt-1">${item.meaning}</div>`;
         return div;
     }));
-
-    content.append(createSection(`👎 Blacklisted Words (${appState.userBlacklist.length})`, appState.userBlacklist, (item) => {
-        return createChip({ text: item, classes: ['bg-red-900/30', 'text-red-300', 'text-xs'] });
-    }));
-
-    content.append(createSection(`🧠 Session Memory (${appState.sessionGeneratedNames.length})`, appState.sessionGeneratedNames.slice(-20), (item) => {
-        return createChip({ text: item.name, classes: ['text-xs'] });
-    }));
-    
+    content.append(createSection(`👎 Blacklisted Words (${appState.userBlacklist.length})`, appState.userBlacklist, (item) => createChip({ text: item, classes: ['bg-red-900/30', 'text-red-300', 'text-xs'] })));
+    content.append(createSection(`🧠 Session Memory (${appState.sessionGeneratedNames.length})`, appState.sessionGeneratedNames.slice(-20), (item) => createChip({ text: item.name, classes: ['text-xs'] })));
     content.append(createSection(`⚠️ Recent Errors (${appState.recentErrors.length})`, appState.recentErrors, (item) => {
         const div = el('div', 'bg-red-900/20 rounded p-2 text-xs text-red-300');
         div.textContent = `${item.timestamp}: ${item.message}`;
         return div;
     }));
-
-    if (content.innerHTML.trim() === '') {
-        content.innerHTML = '<div class="text-center small-muted py-8">No session data yet.</div>';
-    }
+    if (content.innerHTML.trim() === '') content.innerHTML = '<div class="text-center small-muted py-8">No session data yet.</div>';
   }
   
   // --- PROMPT ENGINEERING ---
@@ -447,29 +438,29 @@ ${task}
     `;
   }
 
+  // FIX: Relaxed Harmonizer prompt for better success rate
   function buildHarmonizerPrompt(languages, gender, isAllLanguages) {
       const sourceLang = languages[0];
       const targetLangs = languages.slice(1);
       
-      let primaryRule = isAllLanguages
-          ? `**PROPER NOUN VALIDATION**: The name MUST be a recognized proper human name in ALL of the following languages: ${languages.join(', ')}.`
-          : `**SOURCE & TARGET VALIDATION**:
-1.  **SOURCE**: The name MUST be a recognized proper human name in the Source Language (${sourceLang}).
-2.  **TARGET AUDIT**: The name MUST be phonetically compatible and semantically safe in the Target Languages (${targetLangs.join(', ')}).`;
+      let primaryGoal = isAllLanguages
+          ? `The goal is to find names that are already established proper names in ALL of the following languages: ${languages.join(', ')}.`
+          : `The goal is to GENERATE a new name inspired by the Source Language (${sourceLang}) that is phonetically and semantically compatible with the Target Languages (${targetLangs.join(', ')}).`;
 
       return `
-You are a cross-cultural linguistic analyst.
-== PRIMARY DIRECTIVE ==
-${primaryRule}
-== CORE VALIDATION CHECKS ==
-1.  **PHONETIC COMPATIBILITY**: INVALID if it contains phonemes that lack a direct, unambiguous equivalent in any language (e.g., "Charlie" fails for Korean L/R ambiguity).
-2.  **SEMANTIC SAFETY CHECK**: INVALID if it is a common word for an object, place, or negative concept in ANY language.
+You are a cross-cultural linguistic analyst. Your task is to generate names that are cross-culturally viable.
+== PRIMARY GOAL ==
+${primaryGoal}
+== GUIDING PRINCIPLES ==
+1.  **PHONETIC FRIENDLINESS**: Strongly prefer names that use phonemes common to all languages. Avoid sounds that are difficult or ambiguous in any target language (e.g., "Charlie" is difficult for Korean L/R).
+2.  **SEMANTIC SAFETY CHECK**: After generating a candidate name, verify it is not a common word for an object, place, or negative concept in ANY of the languages. If it is, discard it.
 == WORKFLOW ==
-1. Select a candidate name. 2. Perform all checks. 3. If it fails, DISCARD and start over. 4. If it passes, provide phonetic pronunciations for EACH language.
+1. Generate a candidate name based on the PRIMARY GOAL and GUIDING PRINCIPLES.
+2. If it passes the safety check, provide phonetic pronunciations for EACH language.
 == OUTPUT FORMAT (JSON ONLY) ==
 { "names": [{ "name": "...", "pronunciations": [{"lang": "...", "phonetic": "..."}, ...], "semanticCheck": "Pass" }] }
 == TASK ==
-Generate ${DEFAULT_COUNT} ${gender.toLowerCase()} names that pass all checks for: ${languages.join(', ')}.
+Generate ${DEFAULT_COUNT} ${gender.toLowerCase()} names that meet the criteria for: ${languages.join(', ')}.
       `;
   }
   
@@ -583,6 +574,12 @@ Generate ${DEFAULT_COUNT} ${gender.toLowerCase()} names that pass all checks for
       left.append(modeSwitcher);
 
       const controlsContainer = el('div', 'flex flex-col gap-4 mt-4');
+      
+      const coreQuerySection = el('details', 'border border-[#0e2334] rounded-lg');
+      coreQuerySection.open = true;
+      coreQuerySection.innerHTML = `<summary class="text-md font-semibold p-3 cursor-pointer list-none">Step 1: Define Core Query <span class="small-muted font-normal">(Languages & Context)</span></summary>`;
+      const coreQueryContent = el('div', 'p-3 border-t border-[#0e2334] flex flex-col gap-4');
+      
       const langSection = createControlSection('Languages (choose 2-3)', el('div'));
       ui.controls.languageChips = el('div', 'flex flex-wrap gap-2');
       const addLangWrap = el('div', 'flex gap-2 mt-2');
@@ -592,26 +589,8 @@ Generate ${DEFAULT_COUNT} ${gender.toLowerCase()} names that pass all checks for
           if (stateManager.addUserLanguage(langInput.value)) langInput.value = '';
       }}));
       langSection.append(ui.controls.languageChips, addLangWrap);
-      controlsContainer.append(langSection);
       
-      ui.controls.harmonizerToggleSection = el('div');
-      // FIX: Corrected Harmonizer toggle text class
-      ui.controls.harmonizerToggleSection.innerHTML = `<div class="toggle-switch"><span class="text-sm font-medium">Proper noun in all languages</span><input type="checkbox" id="harmonizer-toggle" class="toggle-switch-input"><label for="harmonizer-toggle" class="toggle-switch-label">Toggle</label></div>`;
-      controlsContainer.append(ui.controls.harmonizerToggleSection);
-      ui.controls.harmonizerToggleSection.querySelector('input').addEventListener('change', (e) => {
-          stateManager.setOption('harmonizerIsAllLanguages', e.target.checked);
-      });
-
-      ui.controls.themeChips = el('div', 'flex flex-wrap gap-2');
-      ui.controls.themesSection = createControlSection('Themes (choose 1–2)', ui.controls.themeChips);
-      controlsContainer.append(ui.controls.themesSection);
-      
-      ui.controls.styleSection = createControlSection('Style', createSelectControl(STYLE_OPTIONS, appState.options.selectedStyle, 'selectedStyle'));
-      controlsContainer.append(ui.controls.styleSection);
-      
-      // FIX: Restore Gender control
-      controlsContainer.append(createControlSection('Gender', createSelectControl(['Unisex', 'Male', 'Female'], appState.options.gender, 'gender')));
-
+      ui.controls.advancedContextSection = el('div');
       const advancedSection = el('details', 'mt-2');
       advancedSection.innerHTML = `<summary class="text-sm font-medium cursor-pointer">Advanced Context</summary>`;
       const advancedGrid = el('div', 'grid grid-cols-2 gap-2 pt-2');
@@ -622,7 +601,34 @@ Generate ${DEFAULT_COUNT} ${gender.toLowerCase()} names that pass all checks for
       advancedGrid.append(middleNameInput);
       advancedSection.append(advancedGrid);
       ui.controls.advancedContextSection = advancedSection;
-      controlsContainer.append(advancedSection);
+
+      coreQueryContent.append(langSection, advancedSection);
+      coreQuerySection.append(coreQueryContent);
+      controlsContainer.append(coreQuerySection);
+
+      const flavorSection = el('details', 'border border-[#0e2334] rounded-lg mt-4');
+      flavorSection.open = true;
+      flavorSection.innerHTML = `<summary class="text-md font-semibold p-3 cursor-pointer list-none">Step 2: Refine Flavor <span class="small-muted font-normal">(Style, Themes, etc.)</span></summary>`;
+      const flavorContent = el('div', 'p-3 border-t border-[#0e2334] flex flex-col gap-4');
+      ui.controls.flavorSection = flavorContent;
+
+      ui.controls.harmonizerToggleSection = el('div');
+      ui.controls.harmonizerToggleSection.innerHTML = `<div class="toggle-switch"><span class="text-sm font-medium">Proper noun in all languages</span><input type="checkbox" id="harmonizer-toggle" class="toggle-switch-input"><label for="harmonizer-toggle" class="toggle-switch-label">Toggle</label></div>`;
+      flavorContent.append(ui.controls.harmonizerToggleSection);
+      ui.controls.harmonizerToggleSection.querySelector('input').addEventListener('change', (e) => {
+          stateManager.setOption('harmonizerIsAllLanguages', e.target.checked);
+      });
+
+      ui.controls.themeChips = el('div', 'flex flex-wrap gap-2');
+      ui.controls.themesSection = createControlSection('Themes (choose 1–2)', ui.controls.themeChips);
+      flavorContent.append(ui.controls.themesSection);
+      
+      ui.controls.styleSection = createControlSection('Style', createSelectControl(STYLE_OPTIONS, appState.options.selectedStyle, 'selectedStyle'));
+      flavorContent.append(ui.controls.styleSection);
+      
+      flavorContent.append(createControlSection('Gender', createSelectControl(['Unisex', 'Male', 'Female'], appState.options.gender, 'gender')));
+      flavorSection.append(flavorContent);
+      controlsContainer.append(flavorSection);
       
       left.append(controlsContainer);
       
@@ -641,7 +647,8 @@ Generate ${DEFAULT_COUNT} ${gender.toLowerCase()} names that pass all checks for
       const settingsContent = el('div', 'flex flex-col gap-4');
       settingsContent.append(
           createControlSection('Gemini API Key', createLabeledInput({ stateKey: 'apiKey', placeholder: 'Enter your API key', type: 'password' })),
-          createControlSection('Model', createSelectControl(MODEL_OPTIONS, appState.options.model, 'model'))
+          createControlSection('Model', createSelectControl(MODEL_OPTIONS, appState.options.model, 'model')),
+          createControlSection('Output Character Set', createSelectControl(ALPHABET_OPTIONS, appState.options.outputAlphabet, 'outputAlphabet'))
       );
       ui.modals.settings = el('div', 'modal-backdrop items-center justify-center');
       const settingsModal = el('div', 'modal-content bg-[#0e2030] border border-[#1b3146] rounded-lg p-6 flex flex-col gap-4 w-96');
