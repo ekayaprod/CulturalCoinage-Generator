@@ -35,6 +35,10 @@
     .toggle-switch-input:checked + .toggle-switch-label:after { left: calc(100% - 2px); transform: translateX(-100%); }
     details > summary { list-style: none; }
     details > summary::-webkit-details-marker { display: none; }
+    /* IMPLEMENTATION: Added progress bar styles */
+    .progress-bar { height: 4px; background: rgba(255,255,255,0.1); border-radius: 999px; overflow: hidden; }
+    .progress-fill { height: 100%; background: #60a5fa; width: 0%; animation: fill-progress linear forwards; }
+    @keyframes fill-progress { from { width: 0% } to { width: 95% } }
   </style>
 </head>
 <body>
@@ -44,9 +48,10 @@
 (function () {
   // --- CONFIG ---
   const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/";
-  const APP_VERSION = "8.5"; // Fix Harmonizer prompt
+  const APP_VERSION = "8.8"; // Increase timeout, restore progress bar
   const DEFAULT_COUNT = 8;
-  const API_TIMEOUT_MS = 30000;
+  // IMPLEMENTATION: Timeout increased to one minute
+  const API_TIMEOUT_MS = 60000;
   const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Japanese","Greek","Spanish","Irish", "Russian", "Korean", "English"];
   const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music", "Fire", "Mountain", "Ocean", "Sky", "Forest", "Mythic"];
   const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant", "Elegant & Refined", "Grounded & Earthy", "Mystical & Ethereal"];
@@ -123,7 +128,7 @@
         userBlacklist: appState.userBlacklist,
         options: appState.options
     };
-    localStorage.setItem('nameForgeState_v8.5', JSON.stringify(minimalState));
+    localStorage.setItem('nameForgeState_v8.8', JSON.stringify(minimalState));
   }, 1500);
 
   const stateManager = {
@@ -203,7 +208,7 @@
   
   function loadState() {
       try {
-        const saved = localStorage.getItem('nameForgeState_v8.5');
+        const saved = localStorage.getItem('nameForgeState_v8.8');
         if (saved) {
             const parsed = JSON.parse(saved);
             Object.assign(appState.options, parsed.options);
@@ -329,7 +334,15 @@
   // --- UI Rendering ---
   function updateResultsPanel() {
     if (appState.isLoading) {
-        ui.results.panel.innerHTML = `<div class="flex flex-col items-center justify-center py-8 gap-4"><div class="spinner"></div></div>`;
+        // IMPLEMENTATION: Restored progress bar
+        ui.results.panel.innerHTML = `
+            <div class="flex flex-col items-center justify-center py-8 gap-4">
+                <div class="spinner"></div>
+                <div class="text-sm small-muted">Crafting names...</div>
+                <div class="progress-bar w-48 mt-2">
+                    <div class="progress-fill" style="animation-duration: ${API_TIMEOUT_MS}ms;"></div>
+                </div>
+            </div>`;
         return;
     }
     if (appState.error) {
@@ -426,7 +439,8 @@
 You are a poet-linguist specializing in name smithing.
 == CRITICAL RULES ==
 1.  **MULTI-LANGUAGE FUSION**: Invent names by fusing morphemes from 2-3 DIFFERENT languages from the TASK list.
-2.  **ROOT FIDELITY**: The "roots" field must be an array detailing each morpheme's language and gloss.
+2.  **ROOT FIDELITY**: The "roots" field must be an array detailing each morpheme's language and gloss. A morpheme is the smallest meaningful unit of a language, not just a syllable.
+3.  **MORPHOLOGICAL AUTHENTICITY**: Prioritize core, meaningful morphemes (nouns, verbs, adjectives) over simple phonetic affixes to create names with depth. Avoid creating names that are already common in any of the source languages.
 == SESSION CONTEXT ==
 ${sessionMemory}
 - **Inspirational Names**: ${appState.likedNames.map(n=>n.name).join(', ') || 'None.'}
@@ -438,7 +452,6 @@ ${task}
     `;
   }
 
-  // FIX: Relaxed Harmonizer prompt for better success rate
   function buildHarmonizerPrompt(languages, gender, isAllLanguages) {
       const sourceLang = languages[0];
       const targetLangs = languages.slice(1);
@@ -448,19 +461,21 @@ ${task}
           : `The goal is to GENERATE a new name inspired by the Source Language (${sourceLang}) that is phonetically and semantically compatible with the Target Languages (${targetLangs.join(', ')}).`;
 
       return `
-You are a cross-cultural linguistic analyst. Your task is to generate names that are cross-culturally viable.
+You are a cross-cultural linguistic analyst. Your task is to generate names that feel natural across cultures.
 == PRIMARY GOAL ==
 ${primaryGoal}
-== GUIDING PRINCIPLES ==
-1.  **PHONETIC FRIENDLINESS**: Strongly prefer names that use phonemes common to all languages. Avoid sounds that are difficult or ambiguous in any target language (e.g., "Charlie" is difficult for Korean L/R).
-2.  **SEMANTIC SAFETY CHECK**: After generating a candidate name, verify it is not a common word for an object, place, or negative concept in ANY of the languages. If it is, discard it.
+== GUIDING PRINCIPLES (Apply these as a creative guide, not a strict filter) ==
+1.  **PHONETIC HARMONY**: Generate names using sounds and syllable structures that are common and easy to pronounce across all listed languages. Your output should *feel* natural, even if the name is an invention.
+    - **Avoid problematic sounds**: For example, the English L/R sound is ambiguous in Korean. Complex consonant clusters like "str" are difficult in Japanese.
+2.  **SEMANTIC SAFETY CHECK**: Perform a best-effort check to ensure the name is not a common word for an object or a negative concept. Note any potential issues in the 'semanticCheck' field. It's better to return a name with a minor potential issue than no name at all.
 == WORKFLOW ==
 1. Generate a candidate name based on the PRIMARY GOAL and GUIDING PRINCIPLES.
 2. If it passes the safety check, provide phonetic pronunciations for EACH language.
+3. If it fails, DISCARD and start over. Prioritize returning a result over perfect validation.
 == OUTPUT FORMAT (JSON ONLY) ==
 { "names": [{ "name": "...", "pronunciations": [{"lang": "...", "phonetic": "..."}, ...], "semanticCheck": "Pass" }] }
 == TASK ==
-Generate ${DEFAULT_COUNT} ${gender.toLowerCase()} names that meet the criteria for: ${languages.join(', ')}.
+Generate ${DEFAULT_COUNT} ${gender.toLowerCase()} names that meet the creative criteria for: ${languages.join(', ')}.
       `;
   }
   
