@@ -10,20 +10,30 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; background:#071022; color:#E6EEF9; }
+    .scrolling-panel::-webkit-scrollbar{ width:10px } .scrolling-panel::-webkit-scrollbar-thumb{ background:#213449; border-radius:8px }
+    /* FIX: Added missing toast animation */
+    .fade { animation: fade 220ms ease-out; } 
+    @keyframes fade{ from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
     .chip { padding:6px 10px; border-radius:999px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.03); cursor:pointer; user-select:none; display: inline-flex; align-items: center; gap: 4px; }
     .chip.active, .chip-selected { background: linear-gradient(90deg,#294e86,#2b6fb3); color:white; box-shadow:0 6px 18px rgba(41,78,134,0.14) }
     .spinner{ border:4px solid rgba(255,255,255,0.06); border-top-color:#60a5fa; border-radius:999px; width:36px; height:36px; animation:spin 0.9s linear infinite } @keyframes spin{ to{transform:rotate(360deg)} }
     .like-btn.active { fill: #60a5fa; color: #60a5fa; }
-    .modal-backdrop { display: none; position: fixed; inset: 0; background-color: rgba(0,0,0,0.6); backdrop-filter: blur(4px); animation: fadeIn 150ms ease-out; }
+    .modal-backdrop { display: none; position: fixed; inset: 0; z-index: 50; background-color: rgba(0,0,0,0.6); backdrop-filter: blur(4px); animation: fadeIn 150ms ease-out; }
     @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
     .modal-content { animation: slideIn 200ms ease-out; }
     @keyframes slideIn { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
     .mode-toggle { display: flex; background: rgba(255,255,255,0.03); border-radius: 999px; padding: 4px; }
-    .mode-toggle button.chip { flex: 1; text-align: center; padding: 6px 10px; border-radius: 999px; border: none; background: transparent; color: #9fb0c7; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 150ms ease-out; }
-    .mode-toggle button.chip.active { background: linear-gradient(90deg,#294e86,#2b6fb3); color: white; box-shadow: 0 4px 10px rgba(41,78,134,0.1); }
+    .mode-toggle button.chip { flex: 1; text-align: center; }
     .toggle-switch { display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); }
     .source-lang-indicator { font-size: 10px; margin-left: 6px; color: #facc15; }
     .name-card { background:#081426; border:1px solid #123047; border-radius: 0.25rem; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+    .small-muted { color: #9fb0c7; font-size: 13px; }
+    .origin-default { background: #4b5563; color: #f3f4f6; font-size: 10px; padding: 2px 6px; border-radius: 4px; }
+    .toggle-switch-input { height: 0; width: 0; visibility: hidden; }
+    .toggle-switch-label { cursor: pointer; text-indent: -9999px; width: 40px; height: 22px; background: #374151; display: block; border-radius: 100px; position: relative; }
+    .toggle-switch-label:after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: #fff; border-radius: 90px; transition: 0.2s; }
+    .toggle-switch-input:checked + .toggle-switch-label { background: #2563eb; }
+    .toggle-switch-input:checked + .toggle-switch-label:after { left: calc(100% - 2px); transform: translateX(-100%); }
   </style>
 </head>
 <body>
@@ -33,12 +43,18 @@
 (function () {
   // --- CONFIG ---
   const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/";
-  const APP_VERSION = "7.1"; // Version bump for E-mode cleanup
+  const APP_VERSION = "8.3"; // Production ready build
   const DEFAULT_COUNT = 8;
   const API_TIMEOUT_MS = 30000;
   const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Japanese","Greek","Spanish","Irish", "Russian", "Korean", "English"];
   const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music", "Fire", "Mountain", "Ocean", "Sky", "Forest", "Mythic"];
   const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant", "Elegant & Refined", "Grounded & Earthy", "Mystical & Ethereal"];
+  const MODEL_OPTIONS = [
+    { value: "models/gemini-2.5-pro", text: "2.5 Pro (Highest Quality)" },
+    { value: "models/gemini-2.5-pro-preview-06-05", text: "2.5 Pro Preview (Latest)" },
+    { value: "models/gemini-2.5-flash", text: "2.5 Flash (Fast & Balanced)" },
+    { value: "models/gemini-1.5-pro", text: "1.5 Pro (Legacy)" }
+  ];
 
   // --- State ---
   const appState = {
@@ -62,6 +78,7 @@
         surname: "",
         siblingNames: "",
         firstNameForMiddle: "",
+        userLanguages: [],
     }
   };
   
@@ -69,9 +86,23 @@
       root: document.getElementById('app'),
       controls: {},
       results: {},
+      modals: {},
   };
 
   // --- UTILITIES ---
+  function el(tag, cls = '') {
+      const element = document.createElement(tag);
+      if (cls) element.className = cls;
+      return element;
+  }
+
+  function showToast(msg, isError = false) {
+    const toast = el('div', `fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded text-sm fade ${isError ? 'bg-red-800' : 'bg-blue-800'} text-white`);
+    toast.textContent = msg;
+    document.body.append(toast);
+    setTimeout(() => toast.remove(), 3000);
+  }
+
   function debounce(func, delay) {
     let timeout;
     function wrapper(...args) {
@@ -84,14 +115,19 @@
 
   const debouncedSaveState = debounce(() => {
     const minimalState = {
+        apiKey: appState.apiKey,
         likedNames: appState.likedNames,
         userBlacklist: appState.userBlacklist,
         options: appState.options
     };
-    localStorage.setItem('nameForgeState_v7.1', JSON.stringify(minimalState));
+    localStorage.setItem('nameForgeState_v8.3', JSON.stringify(minimalState));
   }, 1500);
 
   const stateManager = {
+    setApiKey(key) {
+        appState.apiKey = key.trim();
+        debouncedSaveState();
+    },
     setOption(key, value) {
         appState.options[key] = value;
         debouncedSaveState();
@@ -109,12 +145,24 @@
         appState.results = []; appState.sessionGeneratedNames = [];
         updateResultsPanel(); updateGenerateButtonState();
     },
+    addUserLanguage(lang) {
+        const newLang = lang.trim();
+        if (newLang && !appState.options.userLanguages.includes(newLang)) {
+            appState.options.userLanguages.push(newLang);
+            this.toggleArrayOption('selectedLanguages', newLang);
+            updateChipSelector(ui.controls.languageChips, LANG_OPTIONS, 'selectedLanguages');
+            return true;
+        }
+        return false;
+    },
     appendSessionName(item) {
         appState.sessionGeneratedNames.push(item);
-        if (appState.sessionGeneratedNames.length > 20) appState.sessionGeneratedNames.slice(-20);
+        if (appState.sessionGeneratedNames.length > 20) {
+            appState.sessionGeneratedNames = appState.sessionGeneratedNames.slice(-20);
+        }
     },
     pushError(msg) {
-        appState.recentErrors.push({ timestamp: new Date().toISOString(), message: msg });
+        appState.recentErrors.push({ timestamp: new Date().toLocaleTimeString(), message: msg });
         appState.recentErrors = appState.recentErrors.slice(-5);
     },
     toggleArrayOption(stateKey, value) {
@@ -126,6 +174,7 @@
             if (stateKey === 'selectedLanguages' && arr.length > 3) arr.shift();
             if (stateKey === 'selectedThemes' && arr.length > 2) arr.shift();
         }
+        debouncedSaveState();
     },
     toggleLike(name) {
         const item = appState.sessionGeneratedNames.find(n => n.name === name);
@@ -152,10 +201,11 @@
   
   function loadState() {
       try {
-        const saved = localStorage.getItem('nameForgeState_v7.1');
+        const saved = localStorage.getItem('nameForgeState_v8.3');
         if (saved) {
             const parsed = JSON.parse(saved);
             Object.assign(appState.options, parsed.options);
+            appState.apiKey = parsed.apiKey || "";
             appState.likedNames = parsed.likedNames || [];
             appState.userBlacklist = parsed.userBlacklist || [];
         }
@@ -163,15 +213,9 @@
   }
   
   // --- UI Creation ---
-  function el(tag, cls = '') {
-      const element = document.createElement(tag);
-      if (cls) element.className = cls;
-      return element;
-  }
-
   function createChip({ text, classes = [], data = {}, onClick }) {
     const chipEl = el('button', `chip ${classes.join(' ')}`);
-    chipEl.textContent = text;
+    chipEl.innerHTML = text;
     Object.entries(data).forEach(([k, v]) => chipEl.dataset[k] = v);
     if (onClick) chipEl.addEventListener('click', onClick);
     return chipEl;
@@ -185,11 +229,17 @@
       return section;
   }
 
-  function createLabeledInput({ stateKey, placeholder }) {
+  function createLabeledInput({ stateKey, placeholder, type = 'text' }) {
     const input = el('input', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
-    input.value = appState.options[stateKey] || '';
+    input.type = type;
+    if (stateKey === 'apiKey') {
+        input.value = appState.apiKey;
+        input.addEventListener('input', (e) => stateManager.setApiKey(e.target.value));
+    } else {
+        input.value = appState.options[stateKey] || '';
+        input.addEventListener('input', (e) => stateManager.setOption(stateKey, e.target.value));
+    }
     input.placeholder = placeholder;
-    input.addEventListener('input', (e) => stateManager.setOption(stateKey, e.target.value));
     return input;
   }
   
@@ -197,9 +247,11 @@
       const select = el('select', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
       options.forEach(opt => {
           const optionEl = el('option');
-          optionEl.value = opt;
-          optionEl.textContent = opt;
-          if (opt === selectedValue) optionEl.selected = true;
+          const value = typeof opt === 'object' ? opt.value : opt;
+          const text = typeof opt === 'object' ? opt.text : opt;
+          optionEl.value = value;
+          optionEl.textContent = text;
+          if (value === selectedValue) optionEl.selected = true;
           select.append(optionEl);
       });
       select.addEventListener('change', (e) => stateManager.setOption(stateKey, e.target.value));
@@ -209,10 +261,18 @@
   function updateChipSelector(container, options, stateKey) {
     container.innerHTML = '';
     const stateArray = appState.options[stateKey];
-    options.forEach(opt => {
+    const allOptions = (stateKey === 'selectedLanguages') ? [...new Set([...options, ...appState.options.userLanguages])] : options;
+
+    const createAndAppendChip = (opt) => {
         const selected = stateArray.includes(opt);
+        let chipText = opt;
+        if (stateKey === 'selectedLanguages' && appState.options.mode === 'harmonizer' && stateArray[0] === opt && !appState.options.harmonizerIsAllLanguages) {
+            chipText += `<span class="source-lang-indicator">(Source)</span>`;
+        }
         const chip = createChip({
-            text: opt, classes: [selected ? 'chip-selected' : ''], data: { key: opt },
+            text: chipText,
+            classes: [selected ? 'chip-selected' : ''],
+            data: { key: opt },
             onClick: () => {
                 stateManager.toggleArrayOption(stateKey, opt);
                 updateChipSelector(container, options, stateKey);
@@ -220,14 +280,23 @@
             }
         });
         container.appendChild(chip);
-    });
+    };
+
+    if (stateKey === 'selectedLanguages') {
+        stateArray.forEach(createAndAppendChip);
+        allOptions.filter(opt => !stateArray.includes(opt)).forEach(createAndAppendChip);
+    } else {
+        allOptions.forEach(createAndAppendChip);
+    }
   }
   
   // --- API & DATA PROCESSING ---
   function parseApiResponse(text) {
     if (!text) return [];
     try {
-        return JSON.parse(text).names || [];
+        const parsed = JSON.parse(text);
+        // FIX: Improve parsing robustness
+        return parsed.names || parsed || [];
     } catch {
         const match = text.match(/\[.*\]/s);
         if (match) try { return JSON.parse(match[0]); } catch {}
@@ -259,6 +328,10 @@
         ui.results.panel.innerHTML = `<div class="flex flex-col items-center justify-center py-8 gap-4"><div class="spinner"></div></div>`;
         return;
     }
+    if (appState.error) {
+        ui.results.panel.innerHTML = `<div class="bg-[#2b1a1a] border border-[#5b2626] rounded p-4"><div class="font-semibold text-red-300">Error</div><p class="small-muted mt-1">${appState.error}</p></div>`;
+        return;
+    }
     ui.results.panel.innerHTML = '';
     const visibleNames = appState.sessionGeneratedNames.filter(item => !appState.userBlacklist.includes(item.name.toLowerCase()));
     if(visibleNames.length === 0) {
@@ -285,8 +358,7 @@
         const meaning = el('div', 'italic small-muted');
         meaning.textContent = item.meaning;
         card.appendChild(meaning);
-        if (item.roots) {
-            // IMPLEMENTATION: renderOrigins logic folded directly into this function.
+        if (item.roots && item.roots.length > 0) {
             const originsDiv = el('div', 'flex flex-wrap gap-2 mt-1');
             item.roots.forEach(r => originsDiv.appendChild(createChip({ text: r, classes: ['origin-default', 'text-xs'] })));
             card.appendChild(originsDiv);
@@ -302,7 +374,8 @@
     }
 
     const actions = el('div', 'flex gap-2 mt-auto pt-2');
-    actions.appendChild(createChip({ text: 'Copy', onClick: () => navigator.clipboard.writeText(item.name) }));
+    // FIX: Add toast feedback to copy button
+    actions.appendChild(createChip({ text: 'Copy', onClick: () => { navigator.clipboard.writeText(item.name); showToast('Copied!'); } }));
     if (appState.options.mode === 'forge') {
         actions.appendChild(createChip({ text: '👍', classes: ['like-btn', item.liked ? 'active' : ''], onClick: () => stateManager.toggleLike(item.name) }));
         actions.appendChild(createChip({ text: '👎', classes: [appState.userBlacklist.includes(item.name.toLowerCase()) ? 'active' : ''], onClick: () => stateManager.toggleBlacklist(item.name) }));
@@ -310,12 +383,49 @@
     card.appendChild(actions);
     return card;
   }
+
+  function updateHistoryModal() {
+    const content = ui.modals.history.querySelector('.scrolling-panel');
+    content.innerHTML = '';
+
+    const createSection = (title, items, renderFunc) => {
+        if (!items || items.length === 0) return el('div');
+        const section = el('div', 'mb-4');
+        section.innerHTML = `<h4 class="text-sm font-semibold mb-2">${title}</h4>`;
+        const list = el('div', 'space-y-2');
+        items.forEach(item => list.append(renderFunc(item)));
+        section.append(list);
+        return section;
+    };
+    
+    content.append(createSection(`👍 Liked Names (${appState.likedNames.length})`, appState.likedNames, (item) => {
+        const div = el('div', 'bg-[#0a1a2e] rounded p-2 text-sm');
+        div.innerHTML = `<div class="font-medium">${item.name}</div><div class="text-xs small-muted italic mt-1">${item.meaning}</div>`;
+        return div;
+    }));
+
+    content.append(createSection(`👎 Blacklisted Words (${appState.userBlacklist.length})`, appState.userBlacklist, (item) => {
+        return createChip({ text: item, classes: ['bg-red-900/30', 'text-red-300', 'text-xs'] });
+    }));
+
+    content.append(createSection(`🧠 Session Memory (${appState.sessionGeneratedNames.length})`, appState.sessionGeneratedNames.slice(-20), (item) => {
+        return createChip({ text: item.name, classes: ['text-xs'] });
+    }));
+    
+    content.append(createSection(`⚠️ Recent Errors (${appState.recentErrors.length})`, appState.recentErrors, (item) => {
+        const div = el('div', 'bg-red-900/20 rounded p-2 text-xs text-red-300');
+        div.textContent = `${item.timestamp}: ${item.message}`;
+        return div;
+    }));
+
+    if (content.innerHTML.trim() === '') {
+        content.innerHTML = '<div class="text-center small-muted py-8">No session data yet.</div>';
+    }
+  }
   
   // --- PROMPT ENGINEERING ---
   function buildForgePrompt(task, gender, sessionHistory) {
-    const sessionMemory = sessionHistory.length > 0 ? `Avoid names from this session: ${sessionHistory.map(n=>n.name).join(', ')}.` : `This is the first generation.`;
-    
-    // IMPLEMENTATION: Advanced context fields are added to the task if they exist.
+    const sessionMemory = sessionHistory.length > 0 ? `Avoid names from this session: ${sessionHistory.map(item => item.name).join(', ')}.` : `This is the first generation.`;
     const { surname, siblingNames, firstNameForMiddle } = appState.options;
     if (surname) task += ` Consider compatibility with surname: ${surname}.`;
     if (siblingNames) task += ` Harmonize with siblings: ${siblingNames}.`;
@@ -338,13 +448,118 @@ ${task}
   }
 
   function buildHarmonizerPrompt(languages, gender, isAllLanguages) {
-      // ... (Harmonizer prompt is unchanged)
+      const sourceLang = languages[0];
+      const targetLangs = languages.slice(1);
+      
+      let primaryRule = isAllLanguages
+          ? `**PROPER NOUN VALIDATION**: The name MUST be a recognized proper human name in ALL of the following languages: ${languages.join(', ')}.`
+          : `**SOURCE & TARGET VALIDATION**:
+1.  **SOURCE**: The name MUST be a recognized proper human name in the Source Language (${sourceLang}).
+2.  **TARGET AUDIT**: The name MUST be phonetically compatible and semantically safe in the Target Languages (${targetLangs.join(', ')}).`;
+
+      return `
+You are a cross-cultural linguistic analyst.
+== PRIMARY DIRECTIVE ==
+${primaryRule}
+== CORE VALIDATION CHECKS ==
+1.  **PHONETIC COMPATIBILITY**: INVALID if it contains phonemes that lack a direct, unambiguous equivalent in any language (e.g., "Charlie" fails for Korean L/R ambiguity).
+2.  **SEMANTIC SAFETY CHECK**: INVALID if it is a common word for an object, place, or negative concept in ANY language.
+== WORKFLOW ==
+1. Select a candidate name. 2. Perform all checks. 3. If it fails, DISCARD and start over. 4. If it passes, provide phonetic pronunciations for EACH language.
+== OUTPUT FORMAT (JSON ONLY) ==
+{ "names": [{ "name": "...", "pronunciations": [{"lang": "...", "phonetic": "..."}, ...], "semanticCheck": "Pass" }] }
+== TASK ==
+Generate ${DEFAULT_COUNT} ${gender.toLowerCase()} names that pass all checks for: ${languages.join(', ')}.
+      `;
   }
   
   // --- MAIN LOGIC ---
-  async function doGenerate(context = {}) { /* ... */ }
+  async function doGenerate(context = {}) {
+    if (appState.isLoading) return;
+    updateGenerateButtonState();
+    if (ui.controls.generateButton.disabled) {
+        showToast("Please select 2-3 languages and (in Forge mode) at least 1 theme.", true);
+        return;
+    }
+    
+    appState.isLoading = true;
+    appState.error = null;
+    updateResultsPanel();
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+    
+    let prompt;
+    const { mode, selectedLanguages, selectedThemes, selectedStyle, gender, harmonizerIsAllLanguages } = appState.options;
+    
+    if (mode === 'forge') {
+        let task;
+        if (context.mode === 'variants') {
+            task = `Generate ${DEFAULT_COUNT} variants of "${context.name}"...`;
+        } else if (appState.likedNames.length > 0 && !appState.options.firstNameForMiddle) {
+            const likedAnalysis = appState.likedNames.map(n => `${n.name} (${n.roots ? n.roots.join(', ') : 'unknown'})`).join('; ');
+            task = `Analyze liked names: ${likedAnalysis}. Generate ${DEFAULT_COUNT} new names with similar qualities. Languages: ${selectedLanguages.join(', ')}. Style: "${selectedStyle}".`;
+        } else {
+            task = `Generate ${DEFAULT_COUNT} original names using morphemes from: ${selectedLanguages.join(', ')}. Themes: ${selectedThemes.join(', ')}. Style: "${selectedStyle}".`;
+        }
+        prompt = buildForgePrompt(task, gender, appState.sessionGeneratedNames);
+    } else {
+        prompt = buildHarmonizerPrompt(selectedLanguages, gender, harmonizerIsAllLanguages);
+    }
+    
+    try {
+        const key = appState.apiKey.trim();
+        if (!key) {
+            ui.results.panel.innerHTML = `<div class="name-card"><div class="font-semibold text-amber-300">API Key Missing</div><p class="small-muted">Set your Gemini API key in Settings to generate names. For now, here is the prompt that would have been sent:</p><pre class="text-xs bg-black/20 p-2 rounded mt-2 whitespace-pre-wrap">${prompt}</pre><button id="copy-prompt-btn" class="chip mt-2">Copy Prompt</button></div>`;
+            document.getElementById('copy-prompt-btn').addEventListener('click', () => { navigator.clipboard.writeText(prompt); showToast('Prompt copied!'); });
+            throw new Error("No API Key");
+        }
+        const model = appState.options.model;
+        const url = `${API_BASE_URL}${model}:generateContent`;
+
+        const body = { contents: [{ parts: [{ text: prompt }] }] };
+        const res = await fetch(`${url}?key=${encodeURIComponent(key)}`, { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(body),
+            signal: controller.signal
+        });
+        
+        if (!res.ok) throw new Error(`API Error ${res.status}: ${await res.text()}`);
+
+        const data = await res.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const names = parseApiResponse(text);
+        const processed = processApiResponse(names);
+        
+        if (processed.length === 0) throw new Error("The model returned no valid names. Try adjusting your query.");
+        processed.forEach(item => stateManager.appendSessionName(item));
+    } catch (err) {
+        if (err.message !== "No API Key") {
+             let errorMsg = err.name === 'AbortError' ? 'Request timed out or was cancelled.' : err.message;
+             if (errorMsg.includes('API key not valid')) errorMsg = 'Your API key is not valid. Please check it in Settings.';
+             else if (errorMsg.includes('quota')) errorMsg = 'You have exceeded your API quota. Please check your Google AI account.';
+             else if (errorMsg.includes('safety')) errorMsg = 'The response was blocked due to safety settings. Try a different query.';
+             stateManager.pushError(errorMsg);
+             appState.error = errorMsg;
+        }
+    } finally {
+        clearTimeout(timeoutId);
+        appState.isLoading = false;
+        updateResultsPanel();
+    }
+  }
   
-  function updateGenerateButtonState() { /* ... */ }
+  function updateGenerateButtonState() {
+    const langRequirement = appState.options.selectedLanguages.length >= 2;
+    const themeRequirement = appState.options.mode === 'forge' ? appState.options.selectedThemes.length >= 1 : true;
+    const isReady = langRequirement && themeRequirement;
+    if (ui.controls.generateButton) {
+        ui.controls.generateButton.disabled = !isReady;
+        ui.controls.generateButton.classList.toggle('opacity-50', !isReady);
+        ui.controls.generateButton.classList.toggle('cursor-not-allowed', !isReady);
+    }
+  }
 
   function initLayout() {
       ui.root.innerHTML = '';
@@ -354,6 +569,12 @@ ${task}
       
       const header = el('div', 'flex justify-between items-center');
       header.innerHTML = `<div><h1 class="text-xl font-semibold">NameForge</h1><div class="small-muted mt-1">Craft a name with meaning</div></div>`;
+      const headerBtns = el('div', 'flex items-center gap-2');
+      headerBtns.append(
+          createChip({ text: 'History', onClick: () => { updateHistoryModal(); ui.modals.history.style.display = 'flex'; } }),
+          createChip({ text: 'Settings', onClick: () => ui.modals.settings.style.display = 'flex' })
+      );
+      header.append(headerBtns);
       left.append(header);
 
       const modeSwitcher = el('div', 'mode-toggle mt-4');
@@ -362,13 +583,24 @@ ${task}
       left.append(modeSwitcher);
 
       const controlsContainer = el('div', 'flex flex-col gap-4 mt-4');
+      const langSection = createControlSection('Languages (choose 2-3)', el('div'));
       ui.controls.languageChips = el('div', 'flex flex-wrap gap-2');
-      controlsContainer.append(createControlSection('Languages (choose 2-3)', ui.controls.languageChips));
+      const addLangWrap = el('div', 'flex gap-2 mt-2');
+      const langInput = el('input', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
+      langInput.placeholder = 'Add a language...';
+      addLangWrap.append(langInput, createChip({ text: 'Add', onClick: () => {
+          if (stateManager.addUserLanguage(langInput.value)) langInput.value = '';
+      }}));
+      langSection.append(ui.controls.languageChips, addLangWrap);
+      controlsContainer.append(langSection);
       
       ui.controls.harmonizerToggleSection = el('div');
+      // FIX: Corrected Harmonizer toggle text class
       ui.controls.harmonizerToggleSection.innerHTML = `<div class="toggle-switch"><span class="text-sm font-medium">Proper noun in all languages</span><input type="checkbox" id="harmonizer-toggle" class="toggle-switch-input"><label for="harmonizer-toggle" class="toggle-switch-label">Toggle</label></div>`;
       controlsContainer.append(ui.controls.harmonizerToggleSection);
-      ui.controls.harmonizerToggleSection.querySelector('input').addEventListener('change', (e) => stateManager.setOption('harmonizerIsAllLanguages', e.target.checked));
+      ui.controls.harmonizerToggleSection.querySelector('input').addEventListener('change', (e) => {
+          stateManager.setOption('harmonizerIsAllLanguages', e.target.checked);
+      });
 
       ui.controls.themeChips = el('div', 'flex flex-wrap gap-2');
       ui.controls.themesSection = createControlSection('Themes (choose 1–2)', ui.controls.themeChips);
@@ -377,7 +609,9 @@ ${task}
       ui.controls.styleSection = createControlSection('Style', createSelectControl(STYLE_OPTIONS, appState.options.selectedStyle, 'selectedStyle'));
       controlsContainer.append(ui.controls.styleSection);
       
-      // IMPLEMENTATION: Advanced Context section restored.
+      // FIX: Restore Gender control
+      controlsContainer.append(createControlSection('Gender', createSelectControl(['Unisex', 'Male', 'Female'], appState.options.gender, 'gender')));
+
       const advancedSection = el('details', 'mt-2');
       advancedSection.innerHTML = `<summary class="text-sm font-medium cursor-pointer">Advanced Context</summary>`;
       const advancedGrid = el('div', 'grid grid-cols-2 gap-2 pt-2');
@@ -403,6 +637,26 @@ ${task}
       
       appWrap.append(left, right);
       ui.root.append(appWrap);
+      
+      const settingsContent = el('div', 'flex flex-col gap-4');
+      settingsContent.append(
+          createControlSection('Gemini API Key', createLabeledInput({ stateKey: 'apiKey', placeholder: 'Enter your API key', type: 'password' })),
+          createControlSection('Model', createSelectControl(MODEL_OPTIONS, appState.options.model, 'model'))
+      );
+      ui.modals.settings = el('div', 'modal-backdrop items-center justify-center');
+      const settingsModal = el('div', 'modal-content bg-[#0e2030] border border-[#1b3146] rounded-lg p-6 flex flex-col gap-4 w-96');
+      settingsModal.innerHTML = `<h3 class="text-lg font-semibold">Settings</h3>`;
+      settingsModal.append(settingsContent, createChip({ text: 'Close', classes: ['bg-blue-800/50', 'justify-center'], onClick: () => ui.modals.settings.style.display = 'none' }));
+      ui.modals.settings.append(settingsModal);
+      
+      ui.modals.history = el('div', 'modal-backdrop items-center justify-center');
+      const historyModal = el('div', 'modal-content bg-[#0e2030] border border-[#1b3146] rounded-lg p-6 flex flex-col gap-4 w-96 max-h-[80vh]');
+      historyModal.innerHTML = `<h3 class="text-lg font-semibold">Session Feedback</h3>`;
+      const historyContentPanel = el('div', 'flex-1 overflow-y-auto scrolling-panel pr-2');
+      historyModal.append(historyContentPanel, createChip({ text: 'Close', classes: ['bg-blue-800/50', 'justify-center'], onClick: () => ui.modals.history.style.display = 'none' }));
+      ui.modals.history.append(historyModal);
+
+      ui.root.append(ui.modals.settings, ui.modals.history);
 
       updateChipSelector(ui.controls.languageChips, LANG_OPTIONS, 'selectedLanguages');
       updateChipSelector(ui.controls.themeChips, THEME_OPTIONS, 'selectedThemes');
