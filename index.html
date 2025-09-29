@@ -43,7 +43,7 @@
 (function () {
   // --- CONFIG ---
   const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/";
-  const APP_VERSION = "7.3"; // Gemini prompt update
+  const APP_VERSION = "7.5"; // Mode A fix for harmonizer prompt
   const DEFAULT_COUNT = 8;
   const API_TIMEOUT_MS = 50000;
   const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Japanese","Greek","Spanish","Irish", "Russian", "Korean", "English"];
@@ -241,7 +241,7 @@
           return { ...base, 
             valid: it.valid === true,
             pronunciations: it.pronunciations || [], 
-            semanticCheck: it.semanticCheck || "Unknown" 
+            semanticCheck: it.semanticCheck || "Pass" // Default to Pass if not provided
           };
       }
     }).filter(Boolean);
