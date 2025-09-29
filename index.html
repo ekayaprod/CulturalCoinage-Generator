@@ -33,7 +33,6 @@
     .toggle-switch-label:after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: #fff; border-radius: 90px; transition: 0.2s; }
     .toggle-switch-input:checked + .toggle-switch-label { background: #2563eb; }
     .toggle-switch-input:checked + .toggle-switch-label:after { left: calc(100% - 2px); transform: translateX(-100%); }
-    .source-lang-indicator { font-size: 10px; margin-left: 6px; color: #facc15; }
   </style>
 </head>
 <body>
@@ -43,16 +42,14 @@
 (function () {
   // --- CONFIG ---
   const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/";
-  const APP_VERSION = "7.5"; // Mode A fix for harmonizer prompt
-  const DEFAULT_COUNT = 8;
-  const API_TIMEOUT_MS = 50000;
+  const APP_VERSION = "7.7"; // Performance optimizations
   const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Japanese","Greek","Spanish","Irish", "Russian", "Korean", "English"];
   const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music", "Fire", "Mountain", "Ocean", "Sky", "Forest", "Mythic"];
   const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant", "Elegant & Refined", "Grounded & Earthy", "Mystical & Ethereal"];
   const MODEL_OPTIONS = [
+    { value: "models/gemini-2.5-flash", text: "2.5 Flash (Fast & Balanced)" },
     { value: "models/gemini-2.5-pro", text: "2.5 Pro (Highest Quality)" },
     { value: "models/gemini-2.5-pro-preview-06-05", text: "2.5 Pro Preview (Latest)" },
-    { value: "models/gemini-2.5-flash", text: "2.5 Flash (Fast & Balanced)" },
     { value: "models/gemini-1.5-pro", text: "1.5 Pro (Legacy)" }
   ];
 
@@ -77,11 +74,16 @@
     userBlacklist: [],
     rawApiResponse: null,
     sessionGeneratedNames: [],
-    model: "models/gemini-2.5-pro",
+    model: "models/gemini-2.5-flash",
     outputAlphabet: "English (Default)",
     generationController: null,
     recentErrors: [],
     hasSeenIntro: false,
+    // New configurable settings
+    defaultCount: 6,
+    apiTimeout: 60, // in seconds
+    maxOutputTokens: 1200,
+    parallelMode: false,
   };
   
   // --- UI Element Cache ---
@@ -138,6 +140,25 @@
       select.addEventListener('change', changeHandler);
       return select;
   }
+  
+  function createNumericInputControl(label, stateKey, min, max, step) {
+    const input = el('input', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
+    input.type = 'number';
+    input.min = min;
+    input.max = max;
+    input.step = step;
+    input.value = appState[stateKey];
+    input.addEventListener('change', e => {
+        const value = parseInt(e.target.value, 10);
+        if (!isNaN(value) && value >= min && value <= max) {
+            appState[stateKey] = value;
+            debouncedSaveState();
+        } else {
+            e.target.value = appState[stateKey]; // Revert if invalid
+        }
+    });
+    return createControlSection(label, input);
+  }
 
   function createContextInput(placeholder, stateKey, className = '') {
     const input = el('input', `w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm ${className}`);
@@ -167,7 +188,23 @@
         const saved = localStorage.getItem(`nameForgeState_v${APP_VERSION}`);
         if (saved) {
             const parsed = JSON.parse(saved);
-            const defaults = { version: APP_VERSION, mode: 'forge', harmonizerIsAllLanguages: false, likedNames: [], userLanguages: [], userBlacklist: [], gender: "Unisex", outputAlphabet: "English (Default)", model: "models/gemini-2.5-pro", recentErrors: [], hasSeenIntro: false };
+            const defaults = { 
+                version: APP_VERSION, 
+                mode: 'forge', 
+                harmonizerIsAllLanguages: false, 
+                likedNames: [], 
+                userLanguages: [], 
+                userBlacklist: [], 
+                gender: "Unisex", 
+                outputAlphabet: "English (Default)", 
+                model: "models/gemini-2.5-flash", 
+                recentErrors: [], 
+                hasSeenIntro: false,
+                defaultCount: 6,
+                apiTimeout: 60,
+                maxOutputTokens: 1200,
+                parallelMode: false,
+            };
             Object.assign(appState, defaults, parsed);
         }
       } catch (e) { console.warn("Could not load state:", e); }
@@ -254,7 +291,7 @@
           ui.results.panel.innerHTML = `
             <div class="flex flex-col items-center justify-center py-8 gap-4">
               <div class="spinner"></div>
-              <div class="text-sm small-muted">Crafting ${DEFAULT_COUNT} names...</div>
+              <div class="text-sm small-muted">Crafting ${appState.defaultCount} names...</div>
             </div>`;
       } else if (appState.error) {
           const escapedError = String(appState.error).replace(/</g, '&lt;');
@@ -308,9 +345,7 @@
         const c = el('button', 'chip active'); 
         c.dataset.option = opt;
         let content = opt;
-        if (appState.mode === 'harmonizer' && appState.selectedLanguages[0] === opt && !appState.harmonizerIsAllLanguages) {
-            content += `<span class="source-lang-indicator">(Source)</span>`;
-        }
+        // Remove source indicator - simplified UX
         c.innerHTML = content;
         ui.controls.languageChips.append(c);
     });
@@ -649,7 +684,7 @@
     
     // --- Modals ---
     // Settings Modal
-    const settingsContent = el('div');
+    const settingsContent = el('div', 'flex flex-col gap-4');
     const apiKeyInput = el('input', 'w-full bg-[#0b1622] border border-[#223447] rounded px-3 py-2 text-sm');
     apiKeyInput.type = 'password';
     apiKeyInput.placeholder = 'Enter your Gemini API key';
@@ -661,8 +696,22 @@
     settingsContent.append(
         createControlSection('Gemini API Key', apiKeyInput),
         createControlSection('Model', modelSel),
-        createControlSection('Output Character Set', alphabetSel)
+        createControlSection('Output Character Set', alphabetSel),
+        createNumericInputControl('Names Per Generation', 'defaultCount', 4, 20, 1),
+        createNumericInputControl('API Timeout (seconds)', 'apiTimeout', 10, 120, 5),
+        createNumericInputControl('Max Response Length (tokens)', 'maxOutputTokens', 800, 4000, 100)
     );
+    const parallelToggle = el('div', 'toggle-switch');
+    parallelToggle.innerHTML = `
+        <span class="text-sm font-medium">Parallel Generation (2x faster, uses 2x quota)</span>
+        <input type="checkbox" class="toggle-switch-input" id="parallel-toggle" ${appState.parallelMode ? 'checked' : ''}>
+        <label class="toggle-switch-label" for="parallel-toggle">Toggle</label>
+    `;
+    parallelToggle.querySelector('input').addEventListener('change', e => {
+        appState.parallelMode = e.target.checked;
+        debouncedSaveState();
+    });
+    settingsContent.append(parallelToggle);
     const settingsCloseBtn = el('button', 'chip bg-blue-800/50 justify-center');
     settingsCloseBtn.textContent = 'Close';
     settingsCloseBtn.addEventListener('click', () => toggleModal(ui.modals.settings, false));
@@ -766,7 +815,7 @@
   function buildForgeTask() {
     const { selectedLanguages, likedNames, selectedThemes, selectedStyle, gender } = appState;
     
-    let taskLines = [`Generate ${DEFAULT_COUNT} original ${gender} names.`];
+    let taskLines = [`Generate ${appState.defaultCount} original ${gender} names.`];
     taskLines.push(`Languages: ${selectedLanguages.join(' + ')}`);
     if (selectedThemes.length > 0) taskLines.push(`Themes: ${selectedThemes.join(', ')}`);
     taskLines.push(`Style: ${selectedStyle}`);
@@ -842,10 +891,12 @@ Validate human names for cross-cultural compatibility. Names should be recognize
 ]
 
 == TASK ==
-Generate ${DEFAULT_COUNT} ${gender} names.
+Generate ${appState.defaultCount} ${gender} names.
 Languages: ${selectedLanguages.join(' + ')}
-Name form: 3–10 letters, 1–3 syllables
+Name form: 4–10 letters, 2–3 syllables (strongly prefer 2-3 syllables; single-syllable names should be rare exceptions)
 Style: ${gender}
+
+IMPORTANT: Prioritize names with 2-3 syllables. Single-syllable names should only be included if they are exceptionally strong candidates.
 `;
   }
   
@@ -857,98 +908,132 @@ Style: ${gender}
       }
   }
 
-  async function doGenerate() {
-      if (appState.isLoading) return;
-      updateGenerateButtonState();
-      if (ui.controls.generateButton.disabled) {
-          showToast("Please select 2-3 languages and (in Forge mode) at least 1 theme.", true);
-          return;
-      }
-      
-      const prompt = buildApiPrompt();
-      const key = appState.apiKey.trim();
+    async function doGenerate() {
+        if (appState.isLoading) return;
+        updateGenerateButtonState();
+        if (ui.controls.generateButton.disabled) {
+            showToast("Please select 2-3 languages and (in Forge mode) at least 1 theme.", true);
+            return;
+        }
+        
+        const key = appState.apiKey.trim();
+        if (!key) {
+            const prompt = buildApiPrompt();
+            ui.results.panel.innerHTML = `
+                <div class="flex flex-col gap-3 p-2">
+                    <div class="small-muted">API Key is missing. Copy the prompt below to use in your preferred LLM tool, or add your key in the Settings modal.</div>
+                    <textarea readonly class="w-full h-64 bg-[#0b1622] border border-[#223447] rounded p-2 text-xs font-mono">${prompt}</textarea>
+                    <button id="copy-prompt-btn" class="chip self-start bg-blue-800/50">Copy Prompt</button>
+                </div>`;
+            document.getElementById('copy-prompt-btn').addEventListener('click', () => {
+                navigator.clipboard.writeText(prompt);
+                showToast('Prompt copied!');
+            });
+            return;
+        }
 
-      if (!key) {
-          ui.results.panel.innerHTML = `
-              <div class="flex flex-col gap-3 p-2">
-                  <div class="small-muted">API Key is missing. Copy the prompt below to use in your preferred LLM tool, or add your key in the Settings modal.</div>
-                  <textarea readonly class="w-full h-64 bg-[#0b1622] border border-[#223447] rounded p-2 text-xs font-mono">${prompt}</textarea>
-                  <button id="copy-prompt-btn" class="chip self-start bg-blue-800/50">Copy Prompt</button>
-              </div>`;
-          document.getElementById('copy-prompt-btn').addEventListener('click', () => {
-              navigator.clipboard.writeText(prompt);
-              showToast('Prompt copied!');
-          });
-          return;
-      }
+        appState.error = null;
+        appState.results = [];
+        appState.isLoading = true;
+        appState.generationController = new AbortController();
+        updateResultsPanel();
 
-      appState.error = null;
-      appState.results = [];
-      
-      appState.isLoading = true;
-      appState.generationController = new AbortController();
-      updateResultsPanel();
+        const timeoutId = setTimeout(() => {
+            if(appState.generationController) appState.generationController.abort()
+        }, appState.apiTimeout * 1000);
 
-      try {
-          const body = { 
-              contents: [{ parts: [{ text: prompt }] }], 
-              generationConfig: { temperature: 0.8, topP: 0.9, maxOutputTokens: 2048 } 
-          };
+        try {
+            let allResults = [];
+            
+            if (appState.parallelMode && appState.defaultCount >= 4) {
+                // Parallel mode: split into two batches
+                const halfCount = Math.ceil(appState.defaultCount / 2);
+                const originalCount = appState.defaultCount;
+                
+                appState.defaultCount = halfCount;
+                const prompt1 = buildApiPrompt();
+                const prompt2 = buildApiPrompt();
+                appState.defaultCount = originalCount;
+                
+                const [result1, result2] = await Promise.all([
+                    callGeminiAPI(prompt1, key, appState.generationController.signal),
+                    callGeminiAPI(prompt2, key, appState.generationController.signal)
+                ]);
+                
+                allResults = [...result1, ...result2];
+            } else {
+                // Standard mode: single request
+                const prompt = buildApiPrompt();
+                allResults = await callGeminiAPI(prompt, key, appState.generationController.signal);
+            }
 
-          const response = await fetch(
-              `${API_BASE_URL}${appState.model}:generateContent?key=${encodeURIComponent(key)}`,
-              {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(body),
-                  signal: appState.generationController.signal
-              }
-          );
+            if (allResults.length) {
+                appState.sessionGeneratedNames.push(...allResults.map(p => p.name));
+                appState.results = allResults;
+            } else {
+                appState.error = "No valid names could be generated from the response.";
+            }
 
-          if (!response.ok) {
-              const errorText = await response.text();
-              throw new Error(`API error ${response.status}: ${errorText}`);
-          }
+        } catch (error) {
+            let errorMsg;
+            if (error.name === 'AbortError') {
+                errorMsg = "Generation timed out or was cancelled by user.";
+            } else {
+                errorMsg = error.message || String(error);
+            }
+            if (errorMsg.includes('quota') || errorMsg.includes('limit')) {
+                errorMsg += ' Try switching to a different model in Settings.';
+            }
+            if (errorMsg.includes('safety') || errorMsg.includes('blocked')) {
+                errorMsg += ' Try adjusting your language/theme selections.';
+            }
+            appState.error = errorMsg;
+            
+            if (!appState.recentErrors) appState.recentErrors = [];
+            appState.recentErrors.push(`${new Date().toLocaleTimeString()}: ${errorMsg}`);
+            if (appState.recentErrors.length > 5) appState.recentErrors.shift();
+        } finally {
+            clearTimeout(timeoutId);
+            appState.isLoading = false;
+            appState.generationController = null;
+            updateResultsPanel();
+            debouncedSaveState();
+        }
+    }
 
-          const data = await response.json();
-          const rawResponse = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          appState.rawApiResponse = rawResponse;
+    // Helper function for API calls
+    async function callGeminiAPI(prompt, key, signal) {
+        const body = { 
+            contents: [{ parts: [{ text: prompt }] }], 
+            generationConfig: { 
+                temperature: 0.8, 
+                topP: 0.9, 
+                maxOutputTokens: appState.maxOutputTokens
+            } 
+        };
 
-          const parsed = parseApiResponse(rawResponse);
-          const processed = processApiResponse(parsed);
+        const response = await fetch(
+            `${API_BASE_URL}${appState.model}:generateContent?key=${encodeURIComponent(key)}`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                signal: signal
+            }
+        );
 
-          if (processed.length) {
-              appState.sessionGeneratedNames.push(...processed.map(p => p.name));
-              appState.results = processed;
-          } else {
-              appState.error = "No valid names could be generated from the response.";
-          }
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API error ${response.status}: ${errorText}`);
+        }
 
-      } catch (error) {
-          let errorMsg;
-          if (error.name === 'AbortError') {
-              errorMsg = "Generation timed out or was cancelled by user.";
-          } else {
-              errorMsg = error.message || String(error);
-          }
-          if (errorMsg.includes('quota') || errorMsg.includes('limit')) {
-              errorMsg += ' Try switching to a different model in Settings.';
-          }
-          if (errorMsg.includes('safety') || errorMsg.includes('blocked')) {
-              errorMsg += ' Try adjusting your language/theme selections.';
-          }
-          appState.error = errorMsg;
-          
-          if (!appState.recentErrors) appState.recentErrors = [];
-          appState.recentErrors.push(`${new Date().toLocaleTimeString()}: ${errorMsg}`);
-          if (appState.recentErrors.length > 5) appState.recentErrors.shift();
-      } finally {
-          appState.isLoading = false;
-          appState.generationController = null;
-          updateResultsPanel();
-          debouncedSaveState();
-      }
-  }
+        const data = await response.json();
+        const rawResponse = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        appState.rawApiResponse = rawResponse;
+
+        const parsed = parseApiResponse(rawResponse);
+        return processApiResponse(parsed);
+    }
 
   window.addEventListener('beforeunload', () => {
       if (appState.generationController) {
@@ -968,5 +1053,4 @@ Style: ${gender}
   </script>
 </body>
 </html>
-
 
