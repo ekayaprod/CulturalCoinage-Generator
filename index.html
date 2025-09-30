@@ -42,7 +42,7 @@
 (function () {
   // --- CONFIG ---
   const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/";
-  const APP_VERSION = "7.7"; // Performance optimizations
+  const APP_VERSION = "8.0"; // View Prompt Feature
   const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Japanese","Greek","Spanish","Irish", "Russian", "Korean", "English"];
   const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music", "Fire", "Mountain", "Ocean", "Sky", "Forest", "Mythic"];
   const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant", "Elegant & Refined", "Grounded & Earthy", "Mystical & Ethereal"];
@@ -297,7 +297,19 @@
           const escapedError = String(appState.error).replace(/</g, '&lt;');
           ui.results.panel.innerHTML = `<div class="bg-[#2b1a1a] border border-[#5b2626] rounded p-4"><div class="text-red-300 font-semibold">Error</div><div class="small-muted mt-2">${escapedError}</div></div>`;
       } else if (!appState.results.length) {
-          ui.results.panel.innerHTML = '<div class="flex-1 flex items-center justify-center small-muted h-full">No names yet — click Generate.</div>';
+            if (appState.rawApiResponse) {
+                // Fallback for when JSON parsing fails
+                const escapedResponse = appState.rawApiResponse.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                ui.results.panel.innerHTML = `
+                    <div class="flex flex-col gap-3 p-2">
+                        <div class="font-semibold text-yellow-400">JSON Parsing Failed</div>
+                        <div class="small-muted">The API returned a response, but it was not in the expected JSON format. Here is the raw text from the model:</div>
+                        <pre class="w-full h-64 bg-[#0b1622] border border-[#223447] rounded p-2 text-xs font-mono overflow-auto">${escapedResponse}</pre>
+                    </div>`;
+            } else {
+                 // Default empty state
+                 ui.results.panel.innerHTML = '<div class="flex-1 flex items-center justify-center small-muted h-full">No names yet — click Generate.</div>';
+            }
       } else {
           const grid = el('div','grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2');
           if (appState.mode === 'forge') {
@@ -488,11 +500,13 @@
   function createModal(id, title, contentEl, footerContent) {
     const modal = el('div', 'modal-backdrop items-center justify-center');
     modal.id = id;
-    const content = el('div', 'modal-content bg-[#0e2030] border border-[#1b3146] rounded-lg p-6 flex flex-col gap-4 w-full max-w-lg max-h-[80vh]');
+    const content = el('div', 'modal-content bg-[#0e2030] border border-[#1b3146] rounded-lg p-6 flex flex-col gap-4 w-full max-w-lg');
     content.innerHTML = `<h3 class="text-lg font-semibold">${title}</h3>`;
-    content.append(contentEl);
+    const scrollableContent = el('div', 'overflow-y-auto max-h-[60vh] pr-2 scrolling-panel');
+    scrollableContent.append(contentEl);
+    content.append(scrollableContent);
     if(footerContent) {
-        const footer = el('div', 'flex gap-2 justify-end mt-2');
+        const footer = el('div', 'flex gap-2 justify-end mt-2 pt-4 border-t border-gray-700/50');
         footer.append(...footerContent);
         content.append(footer);
     }
@@ -501,7 +515,7 @@
   }
   
   function updateHistoryModal() {
-    const historyContent = ui.modals.history.querySelector('.modal-content > div:nth-child(2)');
+    const historyContent = ui.modals.history.querySelector('.scrolling-panel');
     historyContent.innerHTML = '';
 
     if (appState.likedNames.length > 0) {
@@ -571,13 +585,25 @@
     const titleDiv = el('div');
     titleDiv.innerHTML = `<h1 class="text-xl font-semibold">NameForge</h1><div class="small-muted mt-1">Craft a name with meaning</div>`;
     const buttonsDiv = el('div', 'flex items-center gap-2');
+    
+    const viewPromptBtn = el('button', 'chip');
+    viewPromptBtn.textContent = 'View Prompt';
+    viewPromptBtn.addEventListener('click', () => {
+        const prompt = buildApiPrompt();
+        const promptContent = ui.modals.prompt.querySelector('textarea');
+        promptContent.value = prompt;
+        toggleModal(ui.modals.prompt, true);
+    });
+
     const historyBtn = el('button', 'chip');
     historyBtn.textContent = 'History';
     historyBtn.addEventListener('click', () => { updateHistoryModal(); toggleModal(ui.modals.history, true); });
+
     const settingsBtn = el('button', 'chip');
     settingsBtn.textContent = 'Settings';
     settingsBtn.addEventListener('click', () => toggleModal(ui.modals.settings, true));
-    buttonsDiv.append(historyBtn, settingsBtn);
+    
+    buttonsDiv.append(viewPromptBtn, historyBtn, settingsBtn);
     header.append(titleDiv, buttonsDiv);
     return header;
   }
@@ -655,18 +681,18 @@
     
     left.append(controlsContainer);
 
-    const genControlsSection = el('div', 'flex flex-col gap-4 mt-4 border-t border-gray-700 pt-4');
-    ui.controls.generateButton = el('button','bg-gradient-to-r from-[#3b82f6] to-[#2563eb] text-white px-4 py-2 rounded font-semibold shadow flex-1');
-    genControlsSection.append(ui.controls.generateButton);
-    left.append(genControlsSection);
-
     return { left, modeSwitcher };
   }
 
   function createResultsPanel() {
-    const right = el('div','md:col-span-2 bg-[#071427] border border-[#0e2030] rounded-xl p-5 flex flex-col gap-4');
+    const right = el('div','md:col-span-2 bg-[#071427] border border-[#0e2030] rounded-xl p-5 flex flex-col gap-2');
+    
+    ui.controls.generateButton = el('button','bg-gradient-to-r from-[#3b82f6] to-[#2563eb] text-white px-4 py-3 rounded font-semibold shadow w-full');
+    right.append(ui.controls.generateButton);
+
     ui.results.header = el('div');
     right.append(ui.results.header);
+
     ui.results.panel = el('div','mt-2 p-3 bg-[#071a25] border border-[#0f2a3a] rounded-lg min-h-[280px] flex flex-col');
     right.append(ui.results.panel);
     return right;
@@ -718,11 +744,26 @@
     ui.modals.settings = createModal('settings-modal', 'Settings', settingsContent, [settingsCloseBtn]);
     
     // History Modal
-    const historyContent = el('div', 'flex-1 overflow-y-auto scrolling-panel pr-2');
+    const historyContent = el('div', 'space-y-4');
     const historyCloseBtn = el('button', 'chip bg-blue-800/50 justify-center');
     historyCloseBtn.textContent = 'Close';
     historyCloseBtn.addEventListener('click', () => toggleModal(ui.modals.history, false));
     ui.modals.history = createModal('history-modal', 'Session Feedback', historyContent, [historyCloseBtn]);
+
+    // Prompt Modal
+    const promptContent = el('div', 'flex flex-col gap-2');
+    promptContent.innerHTML = `<textarea readonly class="w-full h-64 bg-[#0b1622] border border-[#223447] rounded p-2 text-xs font-mono"></textarea>`;
+    const copyPromptBtn = el('button', 'chip self-start bg-blue-800/50');
+    copyPromptBtn.textContent = 'Copy Prompt';
+    copyPromptBtn.addEventListener('click', () => {
+        const promptText = ui.modals.prompt.querySelector('textarea').value;
+        navigator.clipboard.writeText(promptText);
+        showToast('Prompt copied!');
+    });
+    const promptCloseBtn = el('button', 'chip');
+    promptCloseBtn.textContent = 'Close';
+    promptCloseBtn.addEventListener('click', () => toggleModal(ui.modals.prompt, false));
+    ui.modals.prompt = createModal('prompt-modal', 'Current API Prompt', promptContent, [promptCloseBtn, copyPromptBtn]);
 
     // Welcome Modal
     const welcomeContent = el('div', 'flex flex-col gap-3 text-sm small-muted');
@@ -773,7 +814,7 @@
     });
     ui.modals.welcome = createModal('welcome-modal', 'Welcome to NameForge', welcomeContent, [noKeyBtn, saveKeyBtn]);
     
-    ui.root.append(ui.modals.settings, ui.modals.history, ui.modals.welcome);
+    ui.root.append(ui.modals.settings, ui.modals.history, ui.modals.prompt, ui.modals.welcome);
 
     // --- Event Listeners & Initial UI State ---
     const toggleModeUI = (mode) => {
@@ -812,23 +853,25 @@
   }
 
   // --- Prompt Building ---
-  function buildForgeTask() {
-    const { selectedLanguages, likedNames, selectedThemes, selectedStyle, gender } = appState;
-    
-    let taskLines = [`Generate ${appState.defaultCount} original ${gender} names.`];
+  function buildApiPrompt(countOverride) {
+      const count = countOverride || appState.defaultCount;
+      if (appState.mode === 'forge') {
+          return buildForgePrompt(count);
+      } else {
+          return buildHarmonizerPrompt(count);
+      }
+  }
+
+  function buildForgePrompt(count) {
+    const { selectedLanguages, likedNames, selectedThemes, selectedStyle, gender, userBlacklist } = appState;
+    const inspirational = likedNames.length > 0 ? likedNames.map(n => n.name).join(', ') : 'none';
+    const blacklisted = userBlacklist.length > 0 ? userBlacklist.join(', ') : 'none';
+
+    let taskLines = [`Generate ${count} original ${gender} names.`];
     taskLines.push(`Languages: ${selectedLanguages.join(' + ')}`);
     if (selectedThemes.length > 0) taskLines.push(`Themes: ${selectedThemes.join(', ')}`);
     taskLines.push(`Style: ${selectedStyle}`);
-    
-    return taskLines.join('\n');
-  }
-
-  function buildForgePrompt() {
-    const { likedNames, userBlacklist } = appState;
-    const task = buildForgeTask();
-    
-    const inspirational = likedNames.length > 0 ? likedNames.map(n => n.name).join(', ') : 'none';
-    const blacklisted = userBlacklist.length > 0 ? userBlacklist.join(', ') : 'none';
+    const task = taskLines.join('\n');
 
     return `
 You are a poet-linguist forging names.
@@ -836,11 +879,10 @@ You are a poet-linguist forging names.
 == CRITICAL RULES ==
 1. Multi-language fusion: Each name must use 2–3 morphemes from different TASK languages. No single-language names.
 2. Roots fidelity: "roots" lists every morpheme with language + gloss. If invented, mark (coined). If gloss uncertain, mark (approx).
-3. Cluster: Must equal exactly one of:
-   ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern",
-    "Heroic & Resonant","Elegant & Refined","Grounded & Earthy",
-    "Mystical & Ethereal"].
-4. Output format: Return JSON array only. Follow schema:
+3. Cluster: Must equal exactly one of: ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant","Elegant & Refined","Grounded & Earthy","Mystical & Ethereal"].
+4. Output format: Return ONLY a valid JSON array of objects. No other text or explanation.
+
+== SCHEMA EXAMPLE ==
 [
   {
     "name": "Astroren",
@@ -849,7 +891,6 @@ You are a poet-linguist forging names.
     "cluster": "Heroic & Resonant"
   }
 ]
-5. Name form: 4–10 letters, 1–3 syllables, unisex.
 
 == PRINCIPLES ==
 - Meaning = poetic interpretation of theme.
@@ -864,7 +905,7 @@ ${task}
 `;
   }
   
-  function buildHarmonizerPrompt() {
+  function buildHarmonizerPrompt(count) {
       const { selectedLanguages, gender } = appState;
 
       return `
@@ -875,9 +916,12 @@ Validate human names for cross-cultural compatibility. Names should be recognize
 
 == CORE CHECKS ==
 1. Phonetic compatibility: Note if any phoneme is approximate across languages. Mark with (approx) instead of rejecting.
-2. Semantic safety: Flag if the name is also a common object/place/negative concept. Do not reject; just mark.
+2. Semantic safety: Flag if the name is also a common object/place/negative concept. Do not reject; just mark it.
 
 == OUTPUT FORMAT (JSON only) ==
+Return ONLY a valid JSON array of objects. No other text or explanation.
+
+== SCHEMA EXAMPLE ==
 [
   {
     "name": "Arda",
@@ -891,21 +935,11 @@ Validate human names for cross-cultural compatibility. Names should be recognize
 ]
 
 == TASK ==
-Generate ${appState.defaultCount} ${gender} names.
+Generate ${count} ${gender} names.
 Languages: ${selectedLanguages.join(' + ')}
-Name form: 4–10 letters, 2–3 syllables (strongly prefer 2-3 syllables; single-syllable names should be rare exceptions)
+Name form: 4–10 letters, 2–3 syllables.
 Style: ${gender}
-
-IMPORTANT: Prioritize names with 2-3 syllables. Single-syllable names should only be included if they are exceptionally strong candidates.
 `;
-  }
-  
-  function buildApiPrompt() {
-      if (appState.mode === 'forge') {
-          return buildForgePrompt();
-      } else {
-          return buildHarmonizerPrompt();
-      }
   }
 
     async function doGenerate() {
@@ -934,6 +968,7 @@ IMPORTANT: Prioritize names with 2-3 syllables. Single-syllable names should onl
 
         appState.error = null;
         appState.results = [];
+        appState.rawApiResponse = null;
         appState.isLoading = true;
         appState.generationController = new AbortController();
         updateResultsPanel();
@@ -948,12 +983,9 @@ IMPORTANT: Prioritize names with 2-3 syllables. Single-syllable names should onl
             if (appState.parallelMode && appState.defaultCount >= 4) {
                 // Parallel mode: split into two batches
                 const halfCount = Math.ceil(appState.defaultCount / 2);
-                const originalCount = appState.defaultCount;
                 
-                appState.defaultCount = halfCount;
-                const prompt1 = buildApiPrompt();
-                const prompt2 = buildApiPrompt();
-                appState.defaultCount = originalCount;
+                const prompt1 = buildApiPrompt(halfCount);
+                const prompt2 = buildApiPrompt(halfCount);
                 
                 const [result1, result2] = await Promise.all([
                     callGeminiAPI(prompt1, key, appState.generationController.signal),
@@ -969,10 +1001,9 @@ IMPORTANT: Prioritize names with 2-3 syllables. Single-syllable names should onl
 
             if (allResults.length) {
                 appState.sessionGeneratedNames.push(...allResults.map(p => p.name));
-                appState.results = allResults;
-            } else {
-                appState.error = "No valid names could be generated from the response.";
+                appState.results = allResults.slice(0, appState.defaultCount); // Ensure we don't exceed the requested count
             }
+            // If allResults is empty, the fallback in updateResultsPanel will handle it
 
         } catch (error) {
             let errorMsg;
