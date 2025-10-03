@@ -1041,7 +1041,7 @@ Style: ${gender}
               parts: [{ text: prompt }]
             }
           ],
-          generationConfig: {
+          config: {
             temperature: 0.8,
             topP: 0.9,
             maxOutputTokens: appState.maxOutputTokens
@@ -1069,6 +1069,17 @@ Style: ${gender}
         const data = await response.json();
         const rawResponse = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
         appState.rawApiResponse = rawResponse;
+
+        if (!rawResponse) {
+            if (data?.promptFeedback?.blockReason) {
+                throw new Error(`Request blocked due to: ${data.promptFeedback.blockReason}.`);
+            }
+            const finishReason = data?.candidates?.[0]?.finishReason;
+            if (finishReason && finishReason !== 'STOP') {
+                 throw new Error(`Generation failed: ${finishReason}. Try adjusting your selections.`);
+            }
+            throw new Error("API returned an empty response. This is often due to safety filters. Try adjusting your selections.");
+        }
 
         const parsed = parseApiResponse(rawResponse);
         return processApiResponse(parsed);
