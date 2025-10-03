@@ -1034,23 +1034,31 @@ Style: ${gender}
 
     // Helper function for API calls
     async function callGeminiAPI(prompt, key, signal) {
-        const body = { 
-            contents: [{ parts: [{ text: prompt }] }], 
-            generationConfig: { 
-                temperature: 0.8, 
-                topP: 0.9, 
-                maxOutputTokens: appState.maxOutputTokens
-            } 
+        const body = {
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: prompt }]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.8,
+            topP: 0.9,
+            maxOutputTokens: appState.maxOutputTokens
+          }
         };
 
         const response = await fetch(
-            `${API_BASE_URL}${appState.model}:generateContent?key=${encodeURIComponent(key)}`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-                signal: signal
-            }
+          `${API_BASE_URL}${appState.model}:generateContent`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': key
+            },
+            body: JSON.stringify(body),
+            signal
+          }
         );
 
         if (!response.ok) {
