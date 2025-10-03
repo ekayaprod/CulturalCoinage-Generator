@@ -42,7 +42,7 @@
 (function () {
   // --- CONFIG ---
   const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/";
-  const APP_VERSION = "8.0"; // View Prompt Feature
+  const APP_VERSION = "8.1"; // Prompt & Error Handling Update
   const LANG_OPTIONS = ["Turkish","Nordic","Latin","Celtic","Japanese","Greek","Spanish","Irish", "Russian", "Korean", "English"];
   const THEME_OPTIONS = ["Nature","Cosmic","Balance","Strength","Water","Light","Shadow","Music", "Fire", "Mountain", "Ocean", "Sky", "Forest", "Mythic"];
   const STYLE_OPTIONS = ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant", "Elegant & Refined", "Grounded & Earthy", "Mystical & Ethereal"];
@@ -82,7 +82,7 @@
     // New configurable settings
     defaultCount: 6,
     apiTimeout: 60, // in seconds
-    maxOutputTokens: 1200,
+    maxOutputTokens: 1024,
     parallelMode: false,
   };
   
@@ -202,7 +202,7 @@
                 hasSeenIntro: false,
                 defaultCount: 6,
                 apiTimeout: 60,
-                maxOutputTokens: 1200,
+                maxOutputTokens: 1024,
                 parallelMode: false,
             };
             Object.assign(appState, defaults, parsed);
@@ -864,43 +864,16 @@
 
   function buildForgePrompt(count) {
     const { selectedLanguages, likedNames, selectedThemes, selectedStyle, gender, userBlacklist } = appState;
-    const inspirational = likedNames.length > 0 ? likedNames.map(n => n.name).join(', ') : 'none';
-    const blacklisted = userBlacklist.length > 0 ? userBlacklist.join(', ') : 'none';
+    const inspirational = likedNames.length > 0 ? `Based on these liked names: ${likedNames.map(n => n.name).join(', ')}. ` : '';
+    const blacklisted = userBlacklist.length > 0 ? `Avoid names similar to: ${userBlacklist.join(', ')}. ` : '';
 
-    let taskLines = [`Generate ${count} original ${gender} names.`];
-    taskLines.push(`Languages: ${selectedLanguages.join(' + ')}`);
-    if (selectedThemes.length > 0) taskLines.push(`Themes: ${selectedThemes.join(', ')}`);
-    taskLines.push(`Style: ${selectedStyle}`);
-    const task = taskLines.join('\n');
+    const task = `Generate ${count} original, ${gender} names by fusing these languages: ${selectedLanguages.join(' + ')}. Themes: ${selectedThemes.join(', ')}. Style: ${selectedStyle}.`;
 
-    return `
-You are a poet-linguist forging names.
+    return `You are a linguist creating new names.
+${inspirational}${blacklisted}
+Output ONLY a valid JSON array of objects with this schema: [{"name": "", "roots": "morpheme (Language: gloss)", "meaning": "", "cluster": "Style Category"}]
 
-== CRITICAL RULES ==
-1. Multi-language fusion: Each name must use 2–3 morphemes from different TASK languages. No single-language names.
-2. Roots fidelity: "roots" lists every morpheme with language + gloss. If invented, mark (coined). If gloss uncertain, mark (approx).
-3. Cluster: Must equal exactly one of: ["Lyrical & Melodic","Archaic & Mythic","Minimalist & Modern","Heroic & Resonant","Elegant & Refined","Grounded & Earthy","Mystical & Ethereal"].
-4. Output format: Return ONLY a valid JSON array of objects. No other text or explanation.
-
-== SCHEMA EXAMPLE ==
-[
-  {
-    "name": "Astroren",
-    "roots": "astro (Greek: star) + ren (Nordic: raven)",
-    "meaning": "Celestial raven of wisdom",
-    "cluster": "Heroic & Resonant"
-  }
-]
-
-== PRINCIPLES ==
-- Meaning = poetic interpretation of theme.
-- Roots = factual morpheme breakdown.
-
-== SESSION CONTEXT ==
-Inspirational 👍: ${inspirational}
-Blacklisted 👎: ${blacklisted}
-
-== TASK ==
+TASK:
 ${task}
 `;
   }
@@ -908,37 +881,11 @@ ${task}
   function buildHarmonizerPrompt(count) {
       const { selectedLanguages, gender } = appState;
 
-      return `
-You are a cross-cultural linguistic analyst.
+      return `You are a cross-cultural linguistic analyst.
+Find ${count} ${gender} names that are phonetically and semantically compatible across all of these languages: ${selectedLanguages.join(' + ')}.
 
-== PRIMARY DIRECTIVE ==
-Validate human names for cross-cultural compatibility. Names should be recognized or easily adapted as proper names in ALL TASK languages.
-
-== CORE CHECKS ==
-1. Phonetic compatibility: Note if any phoneme is approximate across languages. Mark with (approx) instead of rejecting.
-2. Semantic safety: Flag if the name is also a common object/place/negative concept. Do not reject; just mark it.
-
-== OUTPUT FORMAT (JSON only) ==
-Return ONLY a valid JSON array of objects. No other text or explanation.
-
-== SCHEMA EXAMPLE ==
-[
-  {
-    "name": "Arda",
-    "valid": true,
-    "pronunciations": [
-      {"lang": "Turkish", "phonetic": "AR-dah"},
-      {"lang": "Nordic", "phonetic": "AHR-da (approx)"}
-    ],
-    "semanticCheck": "Pass"
-  }
-]
-
-== TASK ==
-Generate ${count} ${gender} names.
-Languages: ${selectedLanguages.join(' + ')}
-Name form: 4–10 letters, 2–3 syllables.
-Style: ${gender}
+Output ONLY a valid JSON array of objects with this schema:
+[{"name": "", "valid": boolean, "pronunciations": [{"lang": "", "phonetic": ""}], "semanticCheck": "Pass | Note"}]
 `;
   }
 
@@ -1071,14 +1018,19 @@ Style: ${gender}
         appState.rawApiResponse = rawResponse;
 
         if (!rawResponse) {
+            const finishReason = data?.candidates?.[0]?.finishReason;
+            
             if (data?.promptFeedback?.blockReason) {
                 throw new Error(`Request blocked due to: ${data.promptFeedback.blockReason}.`);
             }
-            const finishReason = data?.candidates?.[0]?.finishReason;
-            if (finishReason && finishReason !== 'STOP') {
+
+            if (finishReason && finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
                  throw new Error(`Generation failed: ${finishReason}. Try adjusting your selections.`);
             }
-            throw new Error("API returned an empty response. This is often due to safety filters. Try adjusting your selections.");
+            
+            if (finishReason !== 'MAX_TOKENS') {
+                throw new Error("API returned an empty response. This is often due to safety filters. Try adjusting your selections.");
+            }
         }
 
         const parsed = parseApiResponse(rawResponse);
